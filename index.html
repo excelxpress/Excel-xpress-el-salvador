@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#217346">
+<title>Mi Excel</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
+<style>
+  :root {
+    --bg: #f0f0f0; --toolbar: #217346; --surface: #ffffff; --text: #333;
+    --border: #c0c0c0; --header: #e8e8e8; --selected: #e8f5e9; --accent: #217346;
+  }
+  body.dark {
+    --bg: #1e1e1e; --toolbar: #1b5e20; --surface: #2d2d2d; --text: #e0e0e0;
+    --border: #555; --header: #3a3a3a; --selected: #1b3a1b; --accent: #4caf50;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  .toolbar { background: var(--toolbar); color: white; padding: 5px 8px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+  .toolbar button, .toolbar select { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .toolbar button:hover { background: rgba(255,255,255,0.28); }
+  .toolbar .sep { width: 1px; height: 20px; background: rgba(255,255,255,0.3); margin: 0 2px; }
+  .toolbar select { max-width: 130px; }
+  .formula-bar { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); padding: 4px 8px; align-items: center; gap: 8px; }
+  .cell-ref { min-width: 50px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 3px; font-weight: 600; text-align: center; background: var(--header); font-size: 13px; color: var(--text); }
+  #formula-input { flex: 1; padding: 5px 10px; border: 1px solid var(--border); border-radius: 3px; font-family: Consolas, monospace; font-size: 13px; background: var(--surface); color: var(--text); }
+  .spreadsheet-container { flex: 1; overflow: auto; position: relative; background: var(--surface); -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; table-layout: fixed; transform-origin: 0 0; }
+  th, td { border: 1px solid var(--border); min-width: 80px; height: 26px; padding: 1px 4px; font-size: 13px; white-space: nowrap; overflow: hidden; }
+  th { background: var(--header); font-weight: 600; text-align: center; position: sticky; top: 0; z-index: 10; user-select: none; color: var(--text); }
+  th.row-header { left: 0; z-index: 20; min-width: 36px; width: 36px; background: var(--header); }
+  .frozen-col { position: sticky; left: 36px; z-index: 5; background: var(--surface); }
+  th.frozen-col { z-index: 15; background: var(--header); }
+  td { background: var(--surface); cursor: cell; color: var(--text); }
+  td.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--selected); }
+  td.editing { padding: 0; }
+  td input { width: 100%; height: 100%; border: none; outline: none; padding: 1px 4px; font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text); }
+  td.negative { color: #e53935 !important; }
+  td.has-comment { position: relative; }
+  td.has-comment::after { content: ""; position: absolute; top: 0; right: 0; border: 5px solid transparent; border-top: 5px solid #ff9800; border-right: 5px solid #ff9800; }
+  td.cf-dev { background: #ffcdd2 !important; color: #b71c1c !important; }
+  td.cf-pagado { background: #c8e6c9 !important; }
+  td.cf-resumen { background: #fff9c4 !important; font-weight: 600; }
+  td.cf-header { background: #e8f5e9 !important; font-weight: 700; }
+  td.cf-liquidado { background: #e3f2fd !important; }
+  .sheets-bar { background: var(--header); border-top: 1px solid var(--border); padding: 4px 8px; display: flex; gap: 3px; align-items: center; overflow-x: auto; }
+  .sheet-tab { padding: 4px 14px; background: #c8c8c8; border-radius: 3px 3px 0 0; cursor: pointer; font-size: 12px; white-space: nowrap; color: #333; }
+  body.dark .sheet-tab { background: #555; color: #eee; }
+  .sheet-tab.active { background: var(--surface); border: 1px solid var(--border); border-bottom: none; font-weight: 600; color: var(--text); }
+  .status { font-size: 11px; color: #eee; margin-left: auto; }
+  .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100; justify-content: center; align-items: center; padding: 16px; }
+  .modal.show { display: flex; }
+  .modal-content { background: var(--surface); color: var(--text); padding: 22px; border-radius: 10px; max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal-content h3 { margin-bottom: 12px; color: var(--accent); }
+  .modal-content p { font-size: 13px; margin-bottom: 10px; line-height: 1.4; }
+  .modal-content input[type="text"], .modal-content input[type="password"], .modal-content textarea, .modal-content select { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 12px; background: var(--surface); color: var(--text); }
+  .modal-content textarea { min-height: 70px; resize: vertical; font-family: monospace; font-size: 12px; }
+  .btn-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-secondary { background: #e0e0e0; color: #333; }
+  body.dark .btn-secondary { background: #555; color: #eee; }
+  .btn-danger { background: #c62828; color: white; }
+  .permission-box { background: var(--header); padding: 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
+  .permission-box label { display: block; margin: 6px 0; cursor: pointer; }
+  .book-list { max-height: 220px; overflow-y: auto; margin-bottom: 12px; }
+  .book-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .book-item:hover { background: var(--header); }
+  .book-item.active { background: var(--selected); font-weight: 600; }
+  .book-item .actions button { padding: 3px 7px; font-size: 11px; margin-left: 3px; }
+  .zoom-label { font-size: 12px; min-width: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <select id="book-select" onchange="switchBook(this.value)"></select>
+  <button onclick="openBooksModal()">📚</button>
+  <div class="sep"></div>
+  <button onclick="undo()">↶</button>
+  <div class="sep"></div>
+  <button onclick="toggleBold()"><b>N</b></button>
+  <input type="color" id="text-color" value="#000000" style="width:26px;height:24px;border:none;cursor:pointer;" onchange="applyColor()">
+  <input type="color" id="bg-color" value="#ffffff" style="width:26px;height:24px;border:none;cursor:pointer;" onchange="applyBg()">
+  <div class="sep"></div>
+  <button onclick="formatNumber('currency')">$</button>
+  <button onclick="formatNumber('percent')">%</button>
+  <div class="sep"></div>
+  <button onclick="insertRow()">+F</button>
+  <button onclick="deleteRow()">-F</button>
+  <button onclick="insertCol()">+C</button>
+  <button onclick="deleteCol()">-C</button>
+  <div class="sep"></div>
+  <button onclick="sortCol(true)">A↓Z</button>
+  <button onclick="sortCol(false)">Z↓A</button>
+  <div class="sep"></div>
+  <button onclick="openFindModal()">🔍</button>
+  <button onclick="openGotoModal()">📍</button>
+  <button onclick="openCommentModal()">💬</button>
+  <div class="sep"></div>
+  <button onclick="showChart()">📊</button>
+  <button onclick="toggleFreeze()">❄</button>
+  <button onclick="toggleDark()">🌙</button>
+  <div class="sep"></div>
+  <button onclick="zoomOut()">−</button>
+  <span class="zoom-label" id="zoom-label">100%</span>
+  <button onclick="zoomIn()">+</button>
+  <div class="sep"></div>
+  <button onclick="openShareModal()" style="background:#1565c0;">🔗</button>
+  <button onclick="importFile()" title="Importar CSV o Excel (.xlsx)">📥</button>
+  <button onclick="exportCSV()">CSV</button>
+  <button onclick="createClosetTemplate()" title="Plantilla El Clóset de Ron" style="background:#6a1b9a;">📋</button>
+  <button onclick="applyClosetFormulas()" title="Aplicar fórmulas Comisión y Monto" style="background:#e65100;">ƒx</button>
+  <button onclick="openProtectModal()">🔒</button>
+  <span class="status" id="status">Listo</span>
+</div>
+<div class="formula-bar">
+  <div class="cell-ref" id="cell-ref">A1</div>
+  <input type="text" id="formula-input" placeholder="Valor o fórmula (=SUM(A1:A10))" onkeydown="handleFormulaKey(event)">
+</div>
+<div class="spreadsheet-container" id="grid-container"><table id="spreadsheet"></table></div>
+<div class="sheets-bar" id="sheets-bar"></div>
+
+<div class="modal" id="books-modal"><div class="modal-content">
+  <h3>📚 Libros</h3>
+  <input type="text" id="book-search" placeholder="Buscar libro..." oninput="filterBooks()">
+  <div class="book-list" id="book-list"></div>
+  <input type="text" id="new-book-name" placeholder="Nombre del nuevo libro">
+  <div class="btn-row"><button class="btn btn-primary" onclick="createBook()">Crear</button><button class="btn btn-secondary" onclick="closeBooksModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="find-modal"><div class="modal-content">
+  <h3>🔍 Buscar y Reemplazar</h3>
+  <input type="text" id="find-text" placeholder="Buscar...">
+  <input type="text" id="replace-text" placeholder="Reemplazar por...">
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="findNext()">Buscar siguiente</button>
+    <button class="btn btn-secondary" onclick="replaceOne()">Reemplazar</button>
+    <button class="btn btn-secondary" onclick="replaceAll()">Reemplazar todo</button>
+    <button class="btn btn-secondary" onclick="closeFindModal()">Cerrar</button>
+  </div>
+</div></div>
+
+<div class="modal" id="goto-modal"><div class="modal-content">
+  <h3>📍 Ir a celda</h3>
+  <input type="text" id="goto-cell" placeholder="Ej: G45" onkeydown="if(event.key==='Enter')goToCell()">
+  <div class="btn-row"><button class="btn btn-primary" onclick="goToCell()">Ir</button><button class="btn btn-secondary" onclick="closeGotoModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="comment-modal"><div class="modal-content">
+  <h3>💬 Comentario</h3>
+  <p id="comment-cell-label">Celda: A1</p>
+  <textarea id="comment-text" placeholder="Escribe un comentario..."></textarea>
+  <div class="btn-row"><button class="btn btn-primary" onclick="saveComment()">Guardar</button><button class="btn btn-danger" onclick="deleteComment()">Eliminar</button><button class="btn btn-secondary" onclick="closeCommentModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="protect-modal"><div class="modal-content">
+  <h3>🔒 Proteger libro</h3>
+  <input type="password" id="protect-pass" placeholder="Contraseña">
+  <input type="password" id="protect-pass2" placeholder="Repetir contraseña">
+  <div class="btn-row"><button class="btn btn-primary" onclick="setPassword()">Proteger</button><button class="btn btn-danger" onclick="removePassword()">Quitar</button><button class="btn btn-secondary" onclick="closeProtectModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="share-modal"><div class="modal-content">
+  <h3>🔗 Compartir (público)</h3>
+  <p style="font-size:13px;margin-bottom:10px;line-height:1.4">Cualquiera con el enlace puede abrir el libro <b>sin necesidad de cuenta</b>. El enlace funciona directamente en el navegador.</p>
+  <div class="permission-box">
+    <label><input type="radio" name="perm" value="view" checked> Solo ver (recomendado)</label>
+    <label><input type="radio" name="perm" value="edit"> Puede editar</label>
+  </div>
+  <button class="btn btn-primary" onclick="generateShareLink()" style="width:100%;margin-bottom:12px;">Generar enlace público</button>
+  <textarea id="share-link" readonly placeholder="Aquí aparecerá el enlace..."></textarea>
+  <p id="share-info" style="font-size:12px;color:#666;margin:8px 0;"></p>
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="copyShareLink()">Copiar enlace</button>
+    <button class="btn btn-secondary" onclick="closeShareModal()">Cerrar</button>
+  </div>
+</div></div>
+
+<div class="modal" id="chart-modal"><div class="modal-content">
+  <h3>Gráfico</h3>
+  <input type="text" id="chart-range" placeholder="Ej: B2:B10">
+  <canvas id="chart-canvas" width="500" height="280"></canvas>
+  <div class="btn-row" style="margin-top:12px;"><button class="btn btn-primary" onclick="generateChart()">Generar</button><button class="btn btn-secondary" onclick="closeChart()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="readonly-modal"><div class="modal-content">
+  <h3>👁 Solo lectura</h3>
+  <p>Este libro se abrió con un enlace público de <b>solo ver</b>.<br>No necesitas cuenta. Puedes explorar los datos pero no modificarlos.</p>
+  <div class="btn-row"><button class="btn btn-primary" onclick="closeReadonlyModal()">Entendido</button></div>
+</div></div>
+
+<input type="file" id="file-input" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none" onchange="handleImport(event)">
+
+<script>
+const ROWS=50000,COLS=60,VIEW_ROWS=120,ROW_H=26;
+let store={workbooks:{},currentBookId:null},currentSheet=0,selectedCell="A1",editingCell=null,history=[],freezeOn=false,isReadOnly=false,zoomLevel=1,findIndex=-1,findResults=[],viewStart=0,maxUsedRow=0;
+function uid(){return"wb_"+Date.now()+"_"+Math.random().toString(36).slice(2,7)}
+function getCurrentBook(){return store.workbooks[store.currentBookId]}
+function getSheets(){return getCurrentBook()?.sheets||[]}
+function getData(){return getSheets()[currentSheet]?.data||{}}
+function getCell(id){return getData()[id]||null}
+function colName(n){let s="";while(n>=0){s=String.fromCharCode(65+(n%26))+s;n=Math.floor(n/26)-1}return s}
+function cellId(r,c){return colName(c)+(r+1)}
+function parseId(id){const m=id.match(/^([A-Z]+)(\d+)$/);if(!m)return null;let col=0;for(let ch of m[1])col=col*26+(ch.charCodeAt(0)-64);return{row:+m[2]-1,col:col-1}}
+function setCell(id,value,formula=null,style=null,numberFormat=null,comment=undefined,skipLogic=false){
+  if(isReadOnly){setStatus("Solo lectura");return}
+  if(getCurrentBook()?.password&&!window._unlocked){setStatus("Libro protegido");return}
+  saveHistory();
+  const data=getData();
+  if(!data[id])data[id]={};
+  const cell=data[id];
+  cell.value=value;
+  if(formula!==null)cell.formula=formula;
+  if(style)cell.style={...(cell.style||{}),...style};
+  if(numberFormat)cell.numberFormat=numberFormat;
+  if(comment!==undefined)cell.comment=comment;
+  if(formula&&formula.startsWith("="))cell.display=evaluate(formula,id);
+  else cell.display=formatDisplay(value,cell.numberFormat);
+  recalcAllFormulas(id);
+  save();
+  updateDisplay(id);
+  if(!skipLogic)applyClosetLogic(id);
+}
+function recalcAllFormulas(changedId){
+  const data=getData();
+  const changed=parseId(changedId);
+  let count=0;
+  for(const [id,cell] of Object.entries(data)){
+    if(!cell.formula||!cell.formula.startsWith("="))continue;
+    const pos=parseId(id);
+    if(changed&&pos&&Math.abs(pos.row-changed.row)>30&&count>200)continue;
+    try{
+      const newVal=evaluate(cell.formula,id);
+      if(String(newVal)!==String(cell.display)){
+        cell.display=newVal;
+        cell.value=newVal;
+        updateDisplay(id);
+        count++;
+      }
+    }catch(e){}
+  }
+  if(count>0)setStatus("Recalculadas "+count+" fórmulas");
+}
+function getCellVal(id){
+  const c=getCell(id);
+  return c?(c.display??c.value??""):"";
+}
+function isClosetSheet(){
+  const h1=String(getCellVal("A5")).toUpperCase();
+  const h2=String(getCellVal("I5")).toUpperCase();
+  const h3=String(getCellVal("L5")).toUpperCase();
+  return h1.includes("LIQUID")||h2.includes("PRECIO")||h3.includes("MONTO");
+}
+function applyClosetLogic(changedId){
+  if(!isClosetSheet())return;
+  const p=parseId(changedId);
+  if(!p||p.row<5)return;
+  const r=p.row, col=p.col;
+  const envioRate=parseFloat(getCellVal("K2"))||3.95;
+  const comisionRate=parseFloat(getCellVal("L2"))||0.025;
+
+  // Cambió PRECIO (I) o ENVIO (J) → recalcular Comisión y Monto
+  if(col===8||col===9){
+    recalcRowAmounts(r,envioRate,comisionRate);
+    render();
+    setStatus("Comisión y Monto actualizados");
+  }
+  // Escribió fecha en ENTREGA (B) o F.ENTREGA (M)
+  if(col===1||col===12){
+    const val=String(getCellVal(changedId)).trim();
+    if(val.length>=6){
+      setCell(cellId(r,0),"P",null,null,null,undefined,true);          // LIQUIDADO
+      setCell(cellId(r,14),"PAGADO",null,null,null,undefined,true);    // F.PAGO
+      if(col===1&&!String(getCellVal(cellId(r,12))).trim()){
+        setCell(cellId(r,12),val,null,null,null,undefined,true);       // copiar a F.ENTREGA
+      }
+      if(col===12&&!String(getCellVal(cellId(r,1))).trim()){
+        setCell(cellId(r,1),val,null,null,null,undefined,true);        // copiar a ENTREGA
+      }
+      // Asegurar ENVIO si está vacío
+      if(!String(getCellVal(cellId(r,9))).trim()){
+        setCell(cellId(r,9),String(envioRate),null,null,null,undefined,true);
+      }
+      recalcRowAmounts(r,envioRate,comisionRate);
+      render();
+      setStatus("Fecha → Liquidado + Pagado + Monto calculado");
+    }
+  }
+  // Escribió DEV en MONTO
+  if(col===11){
+    const val=String(getCellVal(changedId)).toUpperCase();
+    if(val==="DEV"||val.includes("DEVOLUC")){
+      setCell(cellId(r,12),"DEV",null,null,null,undefined,true);
+      render();
+    }
+  }
+}
+function recalcRowAmounts(r,envioRate,comisionRate){
+  const precio=parseFloat(getCellVal(cellId(r,8)));
+  let envio=parseFloat(getCellVal(cellId(r,9)));
+  if(isNaN(envio))envio=envioRate;
+  if(isNaN(precio))return;
+  let comision=0;
+  if(precio===0) comision=0;
+  else comision=Math.max(1, Math.round(precio*comisionRate*100)/100);
+  const curMonto=String(getCellVal(cellId(r,11))).toUpperCase();
+  let monto;
+  if(curMonto==="DEV"||curMonto.includes("DEVOLUC")) monto="DEV";
+  else if(precio===0) monto=Math.round((-envio)*100)/100;
+  else monto=Math.round((precio-envio-comision)*100)/100;
+  setCell(cellId(r,9),String(envio),null,null,null,undefined,true);
+  setCell(cellId(r,10),String(comision),null,null,null,undefined,true);
+  setCell(cellId(r,11),String(monto),null,null,null,undefined,true);
+}
+function formatDisplay(val,fmt){if(val===""||val==null)return"";const num=parseFloat(val);if(isNaN(num))return val;if(fmt==="currency")return"$"+num.toFixed(2);if(fmt==="percent")return(num*100).toFixed(1)+"%";return num}
+function applyConditionalFormat(td,cell){
+  if(!td)return;
+  td.classList.remove("cf-dev","cf-pagado","cf-resumen","cf-header","cf-liquidado","negative");
+  const val=String(cell?.display??cell?.value??"").toUpperCase().trim();
+  if(val==="DEV"||val.includes("DEVOLUC"))td.classList.add("cf-dev");
+  else if(val==="PAGADO")td.classList.add("cf-pagado");
+  else if(val==="P"&&!cell?.style?.bg)td.classList.add("cf-liquidado");
+  else if(!isNaN(parseFloat(val))&&parseFloat(val)<0)td.classList.add("negative");
+  // Filas de resumen (solo número grande o vacío en columnas clave)
+  if(cell?.style?.bg==="#fff9c4"||cell?.style?.resumen)td.classList.add("cf-resumen");
+}
+function updateDisplay(id){
+  const td=document.querySelector(`td[data-cell="${id}"]`);
+  if(!td)return;
+  const cell=getCell(id);
+  if(cell){
+    td.textContent=cell.display??cell.value??"";
+    td.style.fontWeight=cell.style?.bold?"bold":"";
+    td.style.color=cell.style?.color||"";
+    td.style.background=cell.style?.bg||"";
+    applyConditionalFormat(td,cell);
+    td.classList.toggle("has-comment",!!cell.comment);
+    td.title=cell.comment||"";
+  }else{
+    td.textContent="";td.style.cssText="";td.className="";td.title="";
+  }
+}
+function calcMaxUsedRow(){
+  let max=0;
+  const data=getData();
+  for(const id of Object.keys(data)){
+    const p=parseId(id);
+    if(p&&p.row>max)max=p.row;
+  }
+  maxUsedRow=Math.min(Math.max(max+20,VIEW_ROWS),ROWS-1);
+}
+function render(){
+  calcMaxUsedRow();
+  const table=document.getElementById("spreadsheet");
+  table.innerHTML="";
+  table.style.transform=`scale(${zoomLevel})`;
+  // Header
+  const hr=document.createElement("tr");
+  const corner=document.createElement("th");corner.className="row-header";hr.appendChild(corner);
+  for(let c=0;c<COLS;c++){
+    const th=document.createElement("th");th.textContent=colName(c);
+    if(freezeOn&&c===0)th.classList.add("frozen-col");
+    hr.appendChild(th);
+  }
+  table.appendChild(hr);
+  // Spacer superior (para simular filas anteriores)
+  if(viewStart>0){
+    const spacer=document.createElement("tr");
+    const td=document.createElement("td");
+    td.colSpan=COLS+1;
+    td.style.height=(viewStart*ROW_H)+"px";
+    td.style.padding="0";
+    td.style.border="none";
+    spacer.appendChild(td);
+    table.appendChild(spacer);
+  }
+  // Filas visibles
+  const end=Math.min(viewStart+VIEW_ROWS,maxUsedRow+1);
+  for(let r=viewStart;r<end;r++){
+    const tr=document.createElement("tr");
+    const rh=document.createElement("th");rh.className="row-header";rh.textContent=r+1;tr.appendChild(rh);
+    for(let c=0;c<COLS;c++){
+      const td=document.createElement("td");
+      const id=cellId(r,c);
+      td.dataset.cell=id;
+      if(freezeOn&&c===0)td.classList.add("frozen-col");
+      const cell=getCell(id);
+      if(cell){
+        td.textContent=cell.display??cell.value??"";
+        if(cell.style?.bold)td.style.fontWeight="bold";
+        if(cell.style?.color)td.style.color=cell.style.color;
+        if(cell.style?.bg)td.style.background=cell.style.bg;
+        applyConditionalFormat(td,cell);
+        if(cell.comment){td.classList.add("has-comment");td.title=cell.comment}
+      }
+      td.onclick=()=>select(id);
+      td.ondblclick=()=>{if(!isReadOnly)edit(id)};
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  // Spacer inferior
+  const remaining=maxUsedRow+1-end;
+  if(remaining>0){
+    const spacer=document.createElement("tr");
+    const td=document.createElement("td");
+    td.colSpan=COLS+1;
+    td.style.height=(remaining*ROW_H)+"px";
+    td.style.padding="0";
+    td.style.border="none";
+    spacer.appendChild(td);
+    table.appendChild(spacer);
+  }
+  select(selectedCell);
+  renderSheetTabs();
+  updateBookSelect();
+}
+let scrollTimer=null;
+function onGridScroll(){
+  if(scrollTimer)return;
+  scrollTimer=setTimeout(()=>{
+    scrollTimer=null;
+    const cont=document.getElementById("grid-container");
+    if(!cont)return;
+    const scrollTop=cont.scrollTop/zoomLevel;
+    const newStart=Math.max(0,Math.floor(scrollTop/ROW_H)-5);
+    if(Math.abs(newStart-viewStart)>8){
+      const prevSel=selectedCell;
+      const savedScroll=cont.scrollTop;
+      viewStart=Math.min(newStart,Math.max(0,maxUsedRow-VIEW_ROWS+20));
+      render();
+      cont.scrollTop=savedScroll;
+      if(prevSel)select(prevSel);
+    }
+  },50);
+}
+function renderSheetTabs(){const bar=document.getElementById("sheets-bar");bar.innerHTML="";getSheets().forEach((s,i)=>{const tab=document.createElement("div");tab.className="sheet-tab"+(i===currentSheet?" active":"");tab.textContent=s.name;tab.onclick=()=>switchSheet(i);bar.appendChild(tab)});if(!isReadOnly){const btn=document.createElement("button");btn.textContent="+";btn.style.cssText="margin-left:6px;padding:2px 8px;font-size:14px;";btn.onclick=addSheet;bar.appendChild(btn)}}
+function updateBookSelect(){const sel=document.getElementById("book-select");sel.innerHTML="";Object.keys(store.workbooks).forEach(id=>{const opt=document.createElement("option");opt.value=id;opt.textContent=store.workbooks[id].name+(store.workbooks[id].password?" 🔒":"");if(id===store.currentBookId)opt.selected=true;sel.appendChild(opt)})}
+function select(id){if(editingCell)finishEdit();document.querySelectorAll("td.selected").forEach(e=>e.classList.remove("selected"));const td=document.querySelector(`td[data-cell="${id}"]`);if(td){td.classList.add("selected");selectedCell=id;document.getElementById("cell-ref").textContent=id;const cell=getCell(id);document.getElementById("formula-input").value=cell?.formula||cell?.value||""}}
+function edit(id){if(isReadOnly||(getCurrentBook()?.password&&!window._unlocked))return;select(id);const td=document.querySelector(`td[data-cell="${id}"]`);if(!td)return;editingCell=id;td.classList.add("editing");const cell=getCell(id);const input=document.createElement("input");input.value=cell?.formula||cell?.value||"";input.onkeydown=e=>{if(e.key==="Enter"){finishEdit();move(id,1,0)}if(e.key==="Escape")cancelEdit();if(e.key==="Tab"){e.preventDefault();finishEdit();move(id,0,1)}};input.onblur=finishEdit;td.innerHTML="";td.appendChild(input);input.focus();input.select()}
+function finishEdit(){if(!editingCell)return;const td=document.querySelector(`td[data-cell="${editingCell}"]`);const input=td?.querySelector("input");if(input){const val=input.value.trim();if(val.startsWith("="))setCell(editingCell,evaluate(val,editingCell),val);else setCell(editingCell,val)}editingCell=null;render()}
+function cancelEdit(){editingCell=null;render()}
+function handleFormulaKey(e){if(e.key==="Enter"){if(isReadOnly)return;const val=e.target.value.trim();if(val.startsWith("="))setCell(selectedCell,evaluate(val,selectedCell),val);else setCell(selectedCell,val);render()}}
+function move(id,dRow,dCol){const p=parseId(id);if(!p)return;const nr=Math.max(0,Math.min(ROWS-1,p.row+dRow));const nc=Math.max(0,Math.min(COLS-1,p.col+dCol));if(nr<viewStart||nr>=viewStart+VIEW_ROWS){viewStart=Math.max(0,nr-20);render()}select(cellId(nr,nc))}
+function evaluate(formula,selfId){try{let expr=formula.slice(1).toUpperCase().replace(/\$/g,"");
+expr=expr.replace(/([A-Z]+\d+)/g,m=>{if(m===selfId.replace(/\$/g,""))return"0";const c=getCell(m);const v=parseFloat(c?.display??c?.value);return isNaN(v)?0:v});
+expr=expr.replace(/SUMIF\(([^,]+),([^,]+)(?:,([^)]+))?\)/g,(_,range,crit,sumRange)=>sumif(range,crit,sumRange||range));
+expr=expr.replace(/COUNTIF\(([^,]+),([^)]+)\)/g,(_,range,crit)=>countif(range,crit));
+expr=expr.replace(/IFERROR\(([^,]+),([^)]+)\)/g,(_,val,fallback)=>{try{const r=Function("return("+val+")")();return(r==="#ERROR!"||r==null)?fallback.trim():r}catch{return fallback.trim()}});
+expr=expr.replace(/SUM\(([^)]+)\)/g,(_,r)=>sum(r));expr=expr.replace(/AVERAGE\(([^)]+)\)/g,(_,r)=>avg(r));
+expr=expr.replace(/ROUND\(([^,]+),(\d+)\)/g,(_,n,d)=>Number(Number(n).toFixed(+d)));
+expr=expr.replace(/MAX\(([^)]+)\)/g,(_,r)=>{
+  const parts=r.split(",").map(x=>x.trim());
+  const vals=parts.map(p=>{const n=parseFloat(p);return isNaN(n)?(nums(p)[0]??0):n});
+  return Math.max(...vals,0);
+});
+expr=expr.replace(/MIN\(([^)]+)\)/g,(_,r)=>{
+  const parts=r.split(",").map(x=>x.trim());
+  const vals=parts.map(p=>{const n=parseFloat(p);return isNaN(n)?(nums(p)[0]??0):n});
+  return vals.length?Math.min(...vals):0;
+});
+expr=expr.replace(/COUNT\(([^)]+)\)/g,(_,r)=>nums(r).length);
+expr=expr.replace(/ABS\(([^)]+)\)/g,(_,n)=>Math.abs(+n));expr=expr.replace(/POWER\(([^,]+),([^)]+)\)/g,(_,b,e)=>Math.pow(+b,+e));
+expr=expr.replace(/SQRT\(([^)]+)\)/g,(_,n)=>Math.sqrt(+n));expr=expr.replace(/IF\(([^,]+),([^,]+),([^)]+)\)/g,(_,cond,t,f)=>(Function("return "+cond)()?t.trim():f.trim()));
+expr=expr.replace(/CONCAT\(([^)]+)\)/g,(_,args)=>args.split(",").map(a=>a.replace(/"/g,"").trim()).join(""));
+expr=expr.replace(/LEN\(([^)]+)\)/g,(_,s)=>String(s).length);expr=expr.replace(/LEFT\(([^,]+),(\d+)\)/g,(_,s,n)=>String(s).slice(0,+n));
+expr=expr.replace(/RIGHT\(([^,]+),(\d+)\)/g,(_,s,n)=>String(s).slice(-n));expr=expr.replace(/TODAY\(\)/g,()=>new Date().toLocaleDateString("es-SV"));
+expr=expr.replace(/NOW\(\)/g,()=>new Date().toLocaleString("es-SV"));
+const res=Function('"use strict";return('+expr+')')();return typeof res==="number"?Math.round(res*1e6)/1e6:res}catch{return"#ERROR!"}}
+function expand(range){if(range.includes(":")){const[a,b]=range.split(":");const s=parseId(a.trim()),e=parseId(b.trim());if(!s||!e)return[];const list=[];for(let r=Math.min(s.row,e.row);r<=Math.max(s.row,e.row);r++)for(let c=Math.min(s.col,e.col);c<=Math.max(s.col,e.col);c++)list.push(cellId(r,c));return list}return range.split(",").map(x=>x.trim())}
+function nums(range){return expand(range).map(id=>{const c=getCell(id);const v=parseFloat(c?.display??c?.value);return isNaN(v)?null:v}).filter(v=>v!==null)}
+function sum(r){return nums(r).reduce((a,b)=>a+b,0)}function avg(r){const n=nums(r);return n.length?n.reduce((a,b)=>a+b,0)/n.length:0}
+function matchCrit(val,crit){crit=String(crit).replace(/"/g,"").trim();if(crit.startsWith(">="))return parseFloat(val)>=parseFloat(crit.slice(2));if(crit.startsWith("<="))return parseFloat(val)<=parseFloat(crit.slice(2));if(crit.startsWith(">"))return parseFloat(val)>parseFloat(crit.slice(1));if(crit.startsWith("<"))return parseFloat(val)<parseFloat(crit.slice(1));if(crit.startsWith("<>"))return String(val)!==crit.slice(2);return String(val)===crit||parseFloat(val)===parseFloat(crit)}
+function sumif(range,crit,sumRange){const cells=expand(range),sumCells=expand(sumRange);let total=0;cells.forEach((id,i)=>{const c=getCell(id);const v=c?.display??c?.value??"";if(matchCrit(v,crit)){const sv=parseFloat(getCell(sumCells[i])?.display??getCell(sumCells[i])?.value);if(!isNaN(sv))total+=sv}});return total}
+function countif(range,crit){return expand(range).filter(id=>{const c=getCell(id);return matchCrit(c?.display??c?.value??"",crit)}).length}
+function toggleBold(){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,{bold:!(cell.style?.bold)});render()}
+function applyColor(){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,{color:document.getElementById("text-color").value});render()}
+function applyBg(){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,{bg:document.getElementById("bg-color").value});render()}
+function formatNumber(type){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,null,type);render()}
+function insertRow(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.row>=p.row)newData[cellId(pos.row+1,pos.col)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Fila insertada")}
+function deleteRow(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.row===p.row)continue;if(pos.row>p.row)newData[cellId(pos.row-1,pos.col)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Fila eliminada")}
+function insertCol(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.col>=p.col)newData[cellId(pos.row,pos.col+1)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Columna insertada")}
+function deleteCol(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.col===p.col)continue;if(pos.col>p.col)newData[cellId(pos.row,pos.col-1)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Columna eliminada")}
+function sortCol(asc=true){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();calcMaxUsedRow();const col=p.col,rows=[];for(let r=0;r<=maxUsedRow;r++){const id=cellId(r,col);const cell=getCell(id);rows.push({r,val:cell?.display??cell?.value??"",cell})}const withData=rows.filter(x=>x.val!=="");const empty=rows.filter(x=>x.val==="");withData.sort((a,b)=>{const na=parseFloat(a.val),nb=parseFloat(b.val);if(!isNaN(na)&&!isNaN(nb))return asc?na-nb:nb-na;return asc?String(a.val).localeCompare(String(b.val)):String(b.val).localeCompare(String(a.val))});const sorted=[...withData,...empty];for(let i=0;i<=maxUsedRow;i++){const id=cellId(i,col);if(sorted[i]&&sorted[i].cell)getData()[id]=sorted[i].cell;else delete getData()[id]}save();render();setStatus(asc?"Ordenado A→Z":"Ordenado Z→A")}
+function showChart(){document.getElementById("chart-modal").classList.add("show");document.getElementById("chart-range").value=selectedCell+":"+selectedCell}
+function closeChart(){document.getElementById("chart-modal").classList.remove("show")}
+function generateChart(){const range=document.getElementById("chart-range").value.trim().toUpperCase();const values=nums(range);if(!values.length){alert("No hay datos");return}const canvas=document.getElementById("chart-canvas");const ctx=canvas.getContext("2d");ctx.clearRect(0,0,canvas.width,canvas.height);const max=Math.max(...values,1);const barW=Math.min(40,(canvas.width-40)/values.length-4);values.forEach((v,i)=>{const h=(v/max)*(canvas.height-50);const x=30+i*(barW+6);ctx.fillStyle="#217346";ctx.fillRect(x,canvas.height-30-h,barW,h);ctx.fillStyle="#333";ctx.font="11px sans-serif";ctx.fillText(v,x,canvas.height-30-h-4)});setStatus("Gráfico generado")}
+function toggleFreeze(){freezeOn=!freezeOn;render();setStatus(freezeOn?"Congelado":"Descongelado")}
+function toggleDark(){document.body.classList.toggle("dark");localStorage.setItem("mi-excel-dark",document.body.classList.contains("dark")?"1":"0")}
+function zoomIn(){zoomLevel=Math.min(1.5,zoomLevel+0.1);document.getElementById("zoom-label").textContent=Math.round(zoomLevel*100)+"%";render()}
+function zoomOut(){zoomLevel=Math.max(0.6,zoomLevel-0.1);document.getElementById("zoom-label").textContent=Math.round(zoomLevel*100)+"%";render()}
+function switchSheet(idx){currentSheet=idx;history=[];render()}
+function addSheet(){if(isReadOnly)return;getSheets().push({name:"Hoja"+(getSheets().length+1),data:{}});currentSheet=getSheets().length-1;save();render()}
+function openBooksModal(){filterBooks();document.getElementById("books-modal").classList.add("show")}
+function closeBooksModal(){document.getElementById("books-modal").classList.remove("show")}
+function filterBooks(){const q=(document.getElementById("book-search")?.value||"").toLowerCase();const list=document.getElementById("book-list");list.innerHTML="";Object.keys(store.workbooks).forEach(id=>{const wb=store.workbooks[id];if(q&&!wb.name.toLowerCase().includes(q))return;const div=document.createElement("div");div.className="book-item"+(id===store.currentBookId?" active":"");div.innerHTML=`<span onclick="trySwitchBook('${id}')">${wb.name}${wb.password?" 🔒":""}</span><span class="actions"><button onclick="event.stopPropagation();duplicateBook('${id}')">Duplicar</button><button onclick="event.stopPropagation();renameBook('${id}')">Renombrar</button><button onclick="event.stopPropagation();deleteBook('${id}')" style="color:#c62828;">Eliminar</button></span>`;list.appendChild(div)})}
+function trySwitchBook(id){const wb=store.workbooks[id];if(wb.password&&id!==store.currentBookId){const pass=prompt("Contraseña del libro:");if(pass!==wb.password){alert("Incorrecta");return}window._unlocked=true}switchBook(id);closeBooksModal()}
+function applyClosetFormulas(){
+  if(isReadOnly)return;
+  if(!confirm("¿Aplicar fórmulas de Comisión y Monto a todas las filas?\n\nSe usará:\n• Comisión = ROUND(PRECIO × tasa, 2)\n• Monto = PRECIO − ENVÍO − COMISIÓN\n\nLa tasa se toma de L2 (o 0.025 si está vacío)."))return;
+  saveHistory();
+  const data=getData();
+  // Buscar tasa de comisión
+  let tasa=0.025;
+  const tasaCell=getCell("L2")||getCell("K2");
+  if(tasaCell){
+    const t=parseFloat(tasaCell.display??tasaCell.value);
+    if(!isNaN(t)&&t>0&&t<1)tasa=t;
+  }
+  // Asegurar que L2 tenga la tasa
+  if(!getCell("L2")){
+    data["L2"]={value:String(tasa),display:String(tasa),style:{bg:"#e8f5e9"}};
+  }
+  // Detectar columnas por encabezado
+  let colPrecio=-1,colEnvio=-1,colComision=-1,colMonto=-1,headerRow=-1;
+  for(let r=0;r<30;r++){
+    for(let c=0;c<COLS;c++){
+      const id=cellId(r,c);
+      const val=String(getCell(id)?.display??getCell(id)?.value??"").toUpperCase().trim();
+      if(val==="PRECIO"||val==="PRECIO ")colPrecio=c;
+      if(val==="ENVIO"||val==="ENVÍO"||val==="ENVIO ")colEnvio=c;
+      if(val==="COMISION"||val==="COMISIÓN")colComision=c;
+      if(val==="MONTO")colMonto=c;
+    }
+    if(colPrecio>=0&&colMonto>=0){headerRow=r;break;}
+  }
+  // Fallback a columnas de la plantilla (I=8, J=9, K=10, L=11)
+  if(colPrecio<0)colPrecio=8;
+  if(colEnvio<0)colEnvio=9;
+  if(colComision<0)colComision=10;
+  if(colMonto<0)colMonto=11;
+  if(headerRow<0)headerRow=4;
+  let applied=0;
+  calcMaxUsedRow();
+  for(let r=headerRow+1;r<=maxUsedRow;r++){
+    const precioId=cellId(r,colPrecio);
+    const precio=getCell(precioId);
+    const precioVal=parseFloat(precio?.display??precio?.value);
+    if(isNaN(precioVal))continue; // fila sin precio → saltar (resúmenes, vacías)
+    const comisionId=cellId(r,colComision);
+    const montoId=cellId(r,colMonto);
+    const envioId=cellId(r,colEnvio);
+    // No sobrescribir si ya dice DEV
+    const montoActual=String(getCell(montoId)?.display??"").toUpperCase();
+    if(montoActual==="DEV"||montoActual.includes("DEVOLUC"))continue;
+    // Fórmulas
+    const fComision="=ROUND("+colName(colPrecio)+(r+1)+"*$L$2,2)";
+    const fMonto="="+colName(colPrecio)+(r+1)+"-"+colName(colEnvio)+(r+1)+"-"+colName(colComision)+(r+1);
+    if(!data[comisionId])data[comisionId]={};
+    data[comisionId].formula=fComision;
+    data[comisionId].display=evaluate(fComision,comisionId);
+    data[comisionId].value=data[comisionId].display;
+    if(!data[montoId])data[montoId]={};
+    data[montoId].formula=fMonto;
+    data[montoId].display=evaluate(fMonto,montoId);
+    data[montoId].value=data[montoId].display;
+    applied++;
+  }
+  save();render();
+  setStatus("Fórmulas aplicadas a "+applied+" filas");
+  alert("✅ Se aplicaron fórmulas de Comisión y Monto a "+applied+" filas.\n\nAhora al cambiar el PRECIO se actualizarán solas.");
+}
+function createClosetTemplate(){
+  if(isReadOnly)return;
+  if(!confirm("¿Crear plantilla de Control de Entregas (El Clóset de Ron)?"))return;
+  saveHistory();
+  const data={};
+  // Constantes
+  data["A1"]={value:"Min:",display:"Min:"};
+  data["B1"]={value:"0",display:"0"};
+  data["A2"]={value:"Max:",display:"Max:"};
+  data["B2"]={value:"120",display:"120"};
+  data["A3"]={value:"Prom.",display:"Prom."};
+  data["K1"]={value:"Envío",display:"Envío",style:{bold:true}};
+  data["L1"]={value:"COMISION",display:"COMISION",style:{bold:true}};
+  data["K2"]={value:"3.95",display:"3.95",style:{bg:"#e8f5e9"}};
+  data["L2"]={value:"0.025",display:"0.025",style:{bg:"#e8f5e9"}};
+  data["N2"]={value:"3.95",display:"3.95"};
+  data["O2"]={value:"LOTE DE DEVOLUCION",display:"LOTE DE DEVOLUCION"};
+  data["G2"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112",style:{bold:true,bg:"#c8e6c9"}};
+
+  // Encabezados (fila 5)
+  const headers=["LIQUIDADO","ENTREGA","F.RECOLECTA","TIENDA","ID","NOMBRE","ZONA","TELEFONO","PRECIO","ENVIO","COMISION","MONTO","F.ENTREGA","PILOTO","F.PAGO","ENVIO PAGADO"];
+  headers.forEach((h,i)=>{
+    const id=cellId(4,i);
+    data[id]={value:h,display:h,style:{bold:true,bg:"#e8f5e9"}};
+  });
+
+  // Ejemplo de 3 filas de datos con fórmulas
+  // Fila 6
+  data["A6"]={value:"P",display:"P"};
+  data["B6"]={value:"2025-01-10",display:"2025-01-10"};
+  data["C6"]={value:"2025-01-09",display:"2025-01-09"};
+  data["D6"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112"};
+  data["E6"]={value:"1184373",display:"1184373"};
+  data["F6"]={value:"RONOLDI RIVAS",display:"RONOLDI RIVAS"};
+  data["G6"]={value:"SAN VICENTE",display:"SAN VICENTE"};
+  data["H6"]={value:"61196513",display:"61196513"};
+  data["I6"]={value:"68",display:"68"};
+  data["J6"]={value:"3.95",display:"3.95"};
+  data["K6"]={value:"",display:"1.70",formula:"=IF(I6=0,0,MAX(1,ROUND(I6*$L$2,2)))"};
+  data["L6"]={value:"",display:"62.35",formula:"=I6-J6-K6"};
+  data["M6"]={value:"2025-01-10",display:"2025-01-10"};
+  data["O6"]={value:"PAGADO",display:"PAGADO"};
+
+  // Fila 7
+  data["A7"]={value:"P",display:"P"};
+  data["B7"]={value:"2025-01-10",display:"2025-01-10"};
+  data["C7"]={value:"2025-01-09",display:"2025-01-09"};
+  data["D7"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112"};
+  data["E7"]={value:"1184406",display:"1184406"};
+  data["F7"]={value:"JOE MOLINA",display:"JOE MOLINA"};
+  data["G7"]={value:"LA PAZ",display:"LA PAZ"};
+  data["H7"]={value:"74589753",display:"74589753"};
+  data["I7"]={value:"26",display:"26"};
+  data["J7"]={value:"3.95",display:"3.95"};
+  data["K7"]={value:"",display:"1",formula:"=IF(I7=0,0,MAX(1,ROUND(I7*$L$2,2)))"};
+  data["L7"]={value:"",display:"21.05",formula:"=I7-J7-K7"};
+  data["M7"]={value:"2025-01-10",display:"2025-01-10"};
+  data["O7"]={value:"PAGADO",display:"PAGADO"};
+
+  // Fila 8 - Ejemplo de devolución
+  data["A8"]={value:"P",display:"P"};
+  data["C8"]={value:"2025-01-09",display:"2025-01-09"};
+  data["D8"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112"};
+  data["E8"]={value:"1147602",display:"1147602"};
+  data["F8"]={value:"CARLOS SERVELLON",display:"CARLOS SERVELLON"};
+  data["G8"]={value:"SAN MIGUEL",display:"SAN MIGUEL"};
+  data["H8"]={value:"76702853",display:"76702853"};
+  data["I8"]={value:"26",display:"26"};
+  data["J8"]={value:"3.95",display:"3.95"};
+  data["K8"]={value:"1",display:"1"};
+  data["L8"]={value:"DEV",display:"DEV"};
+  data["M8"]={value:"DEV",display:"DEV"};
+
+  // Fila de resumen
+  data["L9"]={value:"",display:"83.75",formula:"=SUM(L6:L7)",style:{bg:"#fff9c4",bold:true,resumen:true}};
+
+  // Instrucciones
+  data["A11"]={value:"INSTRUCCIONES:",display:"INSTRUCCIONES:",style:{bold:true}};
+  data["A12"]={value:"1. Envío fijo está en K2 (3.95)",display:"1. Envío fijo está en K2 (3.95)"};
+  data["A13"]={value:"2. Comisión % está en L2 (0.025 = 2.5%)",display:"2. Comisión % está en L2 (0.025 = 2.5%)"};
+  data["A14"]={value:"3. Comisión = máximo entre $1 y 2.5% del precio",display:"3. Comisión = máximo entre $1 y 2.5% del precio"};
+  data["A15"]={value:"4. Monto = Precio - Envío - Comisión",display:"4. Monto = Precio - Envío - Comisión"};
+  data["A16"]={value:"5. Al escribir FECHA en ENTREGA → se pone P + PAGADO + calcula Monto",display:"5. Al escribir FECHA en ENTREGA → se pone P + PAGADO + calcula Monto"};
+  data["A17"]={value:"6. Escribe DEV en Monto para devoluciones (se pinta de rojo)",display:"6. Escribe DEV en Monto para devoluciones (se pinta de rojo)"};
+
+  getSheets()[currentSheet].data=data;
+  getSheets()[currentSheet].name="Entregas";
+  viewStart=0;
+  history=[];
+  save();render();
+  setStatus("Plantilla Clóset creada");
+}
+function createBook(){const name=document.getElementById("new-book-name").value.trim()||("Libro "+(Object.keys(store.workbooks).length+1));const id=uid();store.workbooks[id]={name,sheets:[{name:"Hoja1",data:{}},{name:"Hoja2",data:{}},{name:"Hoja3",data:{}}]};store.currentBookId=id;currentSheet=0;history=[];window._unlocked=true;document.getElementById("new-book-name").value="";save();render();filterBooks();setStatus("Libro creado")}
+function switchBook(id){if(!store.workbooks[id])return;store.currentBookId=id;currentSheet=0;history=[];window._unlocked=!store.workbooks[id].password;save();render();setStatus("Libro: "+store.workbooks[id].name)}
+function renameBook(id){const n=prompt("Nuevo nombre:",store.workbooks[id].name);if(n&&n.trim()){store.workbooks[id].name=n.trim();save();filterBooks();updateBookSelect()}}
+function duplicateBook(id){const src=store.workbooks[id];const newId=uid();store.workbooks[newId]=JSON.parse(JSON.stringify(src));store.workbooks[newId].name=src.name+" (copia)";delete store.workbooks[newId].password;save();filterBooks();updateBookSelect();setStatus("Duplicado")}
+function deleteBook(id){if(Object.keys(store.workbooks).length<=1){alert("No puedes eliminar el único libro");return}if(!confirm("¿Eliminar \""+store.workbooks[id].name+"\"?"))return;delete store.workbooks[id];if(store.currentBookId===id){store.currentBookId=Object.keys(store.workbooks)[0];currentSheet=0}save();render();filterBooks();setStatus("Eliminado")}
+function openFindModal(){document.getElementById("find-modal").classList.add("show");findIndex=-1;findResults=[]}
+function closeFindModal(){document.getElementById("find-modal").classList.remove("show")}
+function collectFindResults(text){findResults=[];if(!text)return;const data=getData();for(const[id,cell]of Object.entries(data)){const val=String(cell.display??cell.value??"");if(val.toLowerCase().includes(text.toLowerCase()))findResults.push(id)}}
+function findNext(){const text=document.getElementById("find-text").value;if(!text)return;if(findResults.length===0||findIndex===-1)collectFindResults(text);if(findResults.length===0){setStatus("No encontrado");return}findIndex=(findIndex+1)%findResults.length;select(findResults[findIndex]);setStatus(`Encontrado ${findIndex+1}/${findResults.length}`)}
+function replaceOne(){if(isReadOnly)return;const find=document.getElementById("find-text").value;const repl=document.getElementById("replace-text").value;if(!find||!selectedCell)return;const cell=getCell(selectedCell);if(!cell)return;const val=String(cell.value??"");if(val.toLowerCase().includes(find.toLowerCase())){const newVal=val.replace(new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi"),repl);setCell(selectedCell,newVal);render();setStatus("Reemplazado")}findNext()}
+function replaceAll(){if(isReadOnly)return;const find=document.getElementById("find-text").value;const repl=document.getElementById("replace-text").value;if(!find)return;collectFindResults(find);let count=0;findResults.forEach(id=>{const cell=getCell(id);if(!cell)return;const val=String(cell.value??"");const newVal=val.replace(new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi"),repl);if(newVal!==val){setCell(id,newVal);count++}});render();setStatus(`Reemplazados: ${count}`)}
+function openGotoModal(){document.getElementById("goto-modal").classList.add("show");document.getElementById("goto-cell").focus()}
+function closeGotoModal(){document.getElementById("goto-modal").classList.remove("show")}
+function goToCell(){const id=document.getElementById("goto-cell").value.trim().toUpperCase();if(parseId(id)){select(id);closeGotoModal()}else alert("Celda no válida")}
+function openCommentModal(){if(!selectedCell)return;document.getElementById("comment-cell-label").textContent="Celda: "+selectedCell;document.getElementById("comment-text").value=getCell(selectedCell)?.comment||"";document.getElementById("comment-modal").classList.add("show")}
+function closeCommentModal(){document.getElementById("comment-modal").classList.remove("show")}
+function saveComment(){const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,null,null,document.getElementById("comment-text").value);render();closeCommentModal();setStatus("Comentario guardado")}
+function deleteComment(){const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,null,null,"");render();closeCommentModal();setStatus("Comentario eliminado")}
+function openProtectModal(){document.getElementById("protect-modal").classList.add("show")}
+function closeProtectModal(){document.getElementById("protect-modal").classList.remove("show")}
+function setPassword(){const p1=document.getElementById("protect-pass").value;const p2=document.getElementById("protect-pass2").value;if(!p1){alert("Escribe una contraseña");return}if(p1!==p2){alert("No coinciden");return}getCurrentBook().password=p1;window._unlocked=true;save();closeProtectModal();updateBookSelect();setStatus("Protegido")}
+function removePassword(){delete getCurrentBook().password;window._unlocked=true;save();closeProtectModal();updateBookSelect();setStatus("Sin protección")}
+function importFile(){document.getElementById("file-input").click()}
+function handleImport(e){
+  const file=e.target.files[0];if(!file)return;
+  const name=file.name.toLowerCase();
+  if(name.endsWith(".xlsx")||name.endsWith(".xls")){
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const data=new Uint8Array(ev.target.result);
+        // cellStyles + cellNF para intentar traer más información de formato
+        const workbook=XLSX.read(data,{type:"array",cellDates:true,cellStyles:true,cellNF:true,sheetStubs:true});
+        saveHistory();
+        const sheets=[];
+        let totalCells=0, formulaCount=0, colorCount=0;
+        workbook.SheetNames.forEach((sheetName,idx)=>{
+          const ws=workbook.Sheets[sheetName];
+          if(!ws||!ws["!ref"]){
+            sheets.push({name:sheetName||("Hoja"+(idx+1)),data:{}});
+            return;
+          }
+          const range=XLSX.utils.decode_range(ws["!ref"]);
+          const sheetData={};
+          const maxR=Math.min(range.e.r,ROWS-1);
+          const maxC=Math.min(range.e.c,COLS-1);
+          for(let r=range.s.r;r<=maxR;r++){
+            for(let c=range.s.c;c<=maxC;c++){
+              const cellRef=XLSX.utils.encode_cell({r,c});
+              const raw=ws[cellRef];
+              if(!raw)continue;
+              // Valor mostrado (resultado de fórmula o valor directo)
+              let display="";
+              if(raw.w!=null)display=String(raw.w).trim();
+              else if(raw.v!=null)display=String(raw.v).trim();
+              // Fórmula real (si existe)
+              let formula=null;
+              if(raw.f){
+                formula="="+raw.f;
+                formulaCount++;
+              }
+              // Color de fondo (intento)
+              let bg=null, color=null, bold=false;
+              if(raw.s){
+                const s=raw.s;
+                if(s.fgColor&&s.fgColor.rgb){
+                  bg="#"+s.fgColor.rgb.slice(-6);
+                  colorCount++;
+                }else if(s.fgColor&&s.fgColor.theme!=null){
+                  // temas de Excel son difíciles de resolver sin tabla de temas
+                }
+                if(s.font&&s.font.bold)bold=true;
+                if(s.font&&s.font.color&&s.font.color.rgb){
+                  color="#"+s.font.color.rgb.slice(-6);
+                }
+              }
+              if(display===""&&!formula&&!bg)continue;
+              const id=cellId(r,c);
+              const cellObj={
+                value: formula ? display : display,
+                display: display,
+                formula: formula
+              };
+              if(bg||color||bold){
+                cellObj.style={};
+                if(bg)cellObj.style.bg=bg;
+                if(color)cellObj.style.color=color;
+                if(bold)cellObj.style.bold=true;
+              }
+              sheetData[id]=cellObj;
+              totalCells++;
+            }
+          }
+          sheets.push({name:sheetName||("Hoja"+(idx+1)),data:sheetData});
+        });
+        if(sheets.length===0){setStatus("Archivo vacío");return}
+        getCurrentBook().sheets=sheets;
+        currentSheet=0;
+        viewStart=0;
+        history=[];
+        save();render();
+        let msg="Excel: "+sheets.length+" hoja(s), "+totalCells+" celdas";
+        if(formulaCount)msg+=", "+formulaCount+" fórmulas";
+        if(colorCount)msg+=", "+colorCount+" colores";
+        setStatus(msg);
+        if(totalCells===0)alert("No se encontraron datos. El archivo puede estar vacío o protegido.");
+      }catch(err){
+        console.error(err);
+        alert("No se pudo leer el archivo Excel. Verifica que sea un .xlsx válido.");
+        setStatus("Error al importar");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }else{
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const lines=ev.target.result.split(/\r?\n/);
+      saveHistory();
+      const data=getData();
+      Object.keys(data).forEach(k=>delete data[k]);
+      lines.forEach((line,r)=>{
+        if(r>=ROWS)return;
+        const cols=line.includes(";")&&!line.includes(",")?line.split(";"):line.split(",");
+        cols.forEach((val,c)=>{
+          if(c>=COLS)return;
+          const str=val.trim();
+          if(str!==""){
+            const id=cellId(r,c);
+            data[id]={value:str,display:str};
+          }
+        });
+      });
+      save();render();
+      setStatus("CSV importado");
+    };
+    reader.readAsText(file);
+  }
+  e.target.value="";
+}
+function saveHistory(){history.push(JSON.stringify(getData()));if(history.length>25)history.shift()}
+function undo(){if(isReadOnly||!history.length)return;getSheets()[currentSheet].data=JSON.parse(history.pop());render();setStatus("Deshecho")}
+function exportCSV(){calcMaxUsedRow();let csv="";for(let r=0;r<=maxUsedRow;r++){const row=[];for(let c=0;c<COLS;c++){const cell=getCell(cellId(r,c));row.push(cell?(cell.display??cell.value??""):"")}csv+=row.join(",")+"\n"}const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=(getCurrentBook()?.name||"mi-excel")+".csv";a.click();setStatus("Exportado")}
+function setStatus(msg){document.getElementById("status").textContent=msg;setTimeout(()=>document.getElementById("status").textContent="Listo",2500)}
+function save(){if(isReadOnly)return;localStorage.setItem("mi-excel-v3",JSON.stringify(store))}
+function load(){const s=localStorage.getItem("mi-excel-v3");if(s)try{store=JSON.parse(s)}catch{}if(!store.workbooks||!Object.keys(store.workbooks).length){const id=uid();store={workbooks:{[id]:{name:"Libro 1",sheets:[{name:"Hoja1",data:{}},{name:"Hoja2",data:{}},{name:"Hoja3",data:{}}]}},currentBookId:id}}if(!store.currentBookId||!store.workbooks[store.currentBookId])store.currentBookId=Object.keys(store.workbooks)[0];window._unlocked=!getCurrentBook()?.password;if(localStorage.getItem("mi-excel-dark")==="1")document.body.classList.add("dark")}
+function openShareModal(){
+  document.getElementById("share-modal").classList.add("show");
+  document.getElementById("share-link").value="";
+  document.getElementById("share-info").textContent="";
+}
+function closeShareModal(){document.getElementById("share-modal").classList.remove("show")}
+function closeReadonlyModal(){document.getElementById("readonly-modal").classList.remove("show")}
+function generateShareLink(){
+  const perm=document.querySelector('input[name="perm"]:checked').value;
+  const wb=getCurrentBook();
+  const payload={
+    name:wb.name,
+    sheets:wb.sheets,
+    currentSheet:currentSheet,
+    perm:perm,
+    ts:Date.now()
+  };
+  try{
+    const json=JSON.stringify(payload);
+    // Compresión fuerte para que quepan libros grandes
+    let encoded;
+    if(typeof LZString!=="undefined"){
+      encoded=LZString.compressToEncodedURIComponent(json);
+    }else{
+      encoded=btoa(unescape(encodeURIComponent(json)));
+    }
+    const sizeKB=Math.round(encoded.length/1024);
+    if(sizeKB>2500){
+      alert("El libro sigue siendo demasiado grande incluso comprimido ("+sizeKB+" KB).\n\nOpciones:\n1. Exporta a CSV y compártelo por WhatsApp/Drive\n2. Comparte solo una hoja (borra las otras)\n3. Usa el archivo Excel original");
+      document.getElementById("share-info").textContent="Demasiado grande ("+sizeKB+" KB)";
+      return;
+    }
+    const base=window.location.href.split("#")[0].split("?")[0];
+    // Prefijo "c" = comprimido con LZ
+    const link=base+"#share=c"+encoded;
+    document.getElementById("share-link").value=link;
+    document.getElementById("share-info").textContent="✅ Enlace listo ("+sizeKB+" KB comprimidos) • Público • Sin cuenta";
+    setStatus("Enlace generado");
+  }catch(e){
+    console.error(e);
+    alert("No se pudo generar el enlace.\nPrueba exportar a CSV.");
+  }
+}
+function copyShareLink(){
+  const ta=document.getElementById("share-link");
+  if(!ta.value){alert("Primero genera el enlace");return}
+  ta.select();
+  ta.setSelectionRange(0,999999);
+  navigator.clipboard.writeText(ta.value).then(()=>{
+    setStatus("Enlace copiado");
+    alert("✅ Enlace copiado.\n\nCualquiera puede abrirlo sin cuenta.");
+  }).catch(()=>{
+    try{document.execCommand("copy");setStatus("Enlace copiado");alert("✅ Enlace copiado");}
+    catch{alert("Copia el enlace manualmente (mantén presionado el texto)");}
+  });
+}
+function loadFromShare(){
+  const hash=window.location.hash;
+  if(!hash.startsWith("#share="))return false;
+  try{
+    let raw=hash.substring(7);
+    let jsonStr;
+    // Formato comprimido (prefijo "c")
+    if(raw.startsWith("c")&&typeof LZString!=="undefined"){
+      jsonStr=LZString.decompressFromEncodedURIComponent(raw.substring(1));
+      if(!jsonStr)throw new Error("No se pudo descomprimir");
+    }else{
+      // Formato antiguo (base64)
+      jsonStr=decodeURIComponent(escape(atob(raw)));
+    }
+    const payload=JSON.parse(jsonStr);
+    const id=uid();
+    const wb=payload.workbook || {
+      name: payload.name || "Libro compartido",
+      sheets: payload.sheets || []
+    };
+    store.workbooks[id]=wb;
+    store.currentBookId=id;
+    currentSheet=payload.currentSheet||0;
+    isReadOnly=payload.perm==="view";
+    window._unlocked=true;
+    history.replaceState(null,"",window.location.pathname+window.location.search);
+    if(isReadOnly){
+      setTimeout(()=>document.getElementById("readonly-modal").classList.add("show"),300);
+    }
+    setStatus(isReadOnly?"Modo solo lectura (compartido)":"Libro compartido abierto");
+    return true;
+  }catch(e){
+    console.error(e);
+    alert("No se pudo abrir el enlace compartido.\nPuede estar dañado o ser demasiado grande para este navegador.");
+    return false;
+  }
+}
+document.addEventListener("keydown",e=>{if(e.ctrlKey&&e.key==="z"){e.preventDefault();undo()}if(e.ctrlKey&&e.key==="f"){e.preventDefault();openFindModal()}if(e.key==="Delete"&&selectedCell&&!editingCell&&!isReadOnly){setCell(selectedCell,"");render()}});
+document.getElementById("grid-container").addEventListener("scroll",onGridScroll,{passive:true});
+const fromShare=loadFromShare();if(!fromShare)load();render();
+</script>
+</body>
+</html>
