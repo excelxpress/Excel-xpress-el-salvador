@@ -1,0 +1,1814 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#217346">
+<title>Mi Excel</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.5.0/lz-string.min.js"></script>
+<!-- JSZip: se usa SOLO para leer directamente el XML interno del .xlsx (que es un
+     zip) y así extraer los formatos condicionales reales de Excel (conditionalFormatting
+     + dxfs) y los colores de tema (theme1.xml), cosas que la librería SheetJS gratuita
+     no expone. SheetJS se sigue usando para leer las celdas/valores/formulas. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #f0f0f0; --toolbar: #217346; --surface: #ffffff; --text: #333;
+    --border: #c0c0c0; --header: #e8e8e8; --selected: #e8f5e9; --accent: #217346;
+  }
+  body.dark {
+    --bg: #1e1e1e; --toolbar: #1b5e20; --surface: #2d2d2d; --text: #e0e0e0;
+    --border: #555; --header: #3a3a3a; --selected: #1b3a1b; --accent: #4caf50;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  .toolbar { background: var(--toolbar); color: white; padding: 5px 8px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+  .toolbar button, .toolbar select { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .toolbar button:hover { background: rgba(255,255,255,0.28); }
+  .toolbar .sep { width: 1px; height: 20px; background: rgba(255,255,255,0.3); margin: 0 2px; }
+  .toolbar select { max-width: 130px; }
+  .formula-bar { display: flex; background: var(--surface); border-bottom: 1px solid var(--border); padding: 4px 8px; align-items: center; gap: 8px; }
+  .cell-ref { min-width: 50px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 3px; font-weight: 600; text-align: center; background: var(--header); font-size: 13px; color: var(--text); }
+  #formula-input { flex: 1; padding: 5px 10px; border: 1px solid var(--border); border-radius: 3px; font-family: Consolas, monospace; font-size: 13px; background: var(--surface); color: var(--text); }
+  .spreadsheet-container { flex: 1; overflow: auto; position: relative; background: var(--surface); -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; table-layout: fixed; transform-origin: 0 0; }
+  th, td { border: 1px solid var(--border); min-width: 80px; height: 26px; padding: 1px 4px; font-size: 13px; white-space: nowrap; overflow: hidden; }
+  th { background: var(--header); font-weight: 600; text-align: center; position: sticky; top: 0; z-index: 10; user-select: none; color: var(--text); }
+  th.row-header { left: 0; z-index: 20; min-width: 36px; width: 36px; background: var(--header); }
+  .frozen-col { position: sticky; left: 36px; z-index: 5; background: var(--surface); }
+  th.frozen-col { z-index: 15; background: var(--header); }
+  td { background: var(--surface); cursor: cell; color: var(--text); }
+  td.selected { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--selected); }
+  td.editing { padding: 0; }
+  td input { width: 100%; height: 100%; border: none; outline: none; padding: 1px 4px; font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text); }
+  td.negative { color: #e53935 !important; }
+  td.has-comment { position: relative; }
+  td.has-comment::after { content: ""; position: absolute; top: 0; right: 0; border: 5px solid transparent; border-top: 5px solid #ff9800; border-right: 5px solid #ff9800; }
+  td.cf-dev { background: #ffcdd2 !important; color: #b71c1c !important; }
+  td.cf-pagado { background: #c8e6c9 !important; }
+  td.cf-resumen { background: #fff9c4 !important; font-weight: 600; }
+  td.cf-header { background: #e8f5e9 !important; font-weight: 700; }
+  td.cf-liquidado { background: #e3f2fd !important; }
+  .sheets-bar { background: var(--header); border-top: 1px solid var(--border); padding: 4px 8px; display: flex; gap: 3px; align-items: center; overflow-x: auto; }
+  .sheet-tab { padding: 4px 14px; background: #c8c8c8; border-radius: 3px 3px 0 0; cursor: pointer; font-size: 12px; white-space: nowrap; color: #333; }
+  body.dark .sheet-tab { background: #555; color: #eee; }
+  .sheet-tab.active { background: var(--surface); border: 1px solid var(--border); border-bottom: none; font-weight: 600; color: var(--text); }
+  .status { font-size: 11px; color: #eee; margin-left: auto; }
+  .modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100; justify-content: center; align-items: center; padding: 16px; }
+  .modal.show { display: flex; }
+  .modal-content { background: var(--surface); color: var(--text); padding: 22px; border-radius: 10px; max-width: 520px; width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal-content h3 { margin-bottom: 12px; color: var(--accent); }
+  .modal-content p { font-size: 13px; margin-bottom: 10px; line-height: 1.4; }
+  .modal-content input[type="text"], .modal-content input[type="password"], .modal-content textarea, .modal-content select { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 12px; background: var(--surface); color: var(--text); }
+  .modal-content textarea { min-height: 70px; resize: vertical; font-family: monospace; font-size: 12px; }
+  .btn-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-secondary { background: #e0e0e0; color: #333; }
+  body.dark .btn-secondary { background: #555; color: #eee; }
+  .btn-danger { background: #c62828; color: white; }
+  .permission-box { background: var(--header); padding: 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; }
+  .permission-box label { display: block; margin: 6px 0; cursor: pointer; }
+  .book-list { max-height: 220px; overflow-y: auto; margin-bottom: 12px; }
+  .book-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .book-item:hover { background: var(--header); }
+  .book-item.active { background: var(--selected); font-weight: 600; }
+  .book-item .actions button { padding: 3px 7px; font-size: 11px; margin-left: 3px; }
+  .zoom-label { font-size: 12px; min-width: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <select id="book-select" onchange="switchBook(this.value)"></select>
+  <button onclick="openBooksModal()">📚</button>
+  <div class="sep"></div>
+  <button onclick="undo()">↶</button>
+  <div class="sep"></div>
+  <button onclick="toggleBold()"><b>N</b></button>
+  <input type="color" id="text-color" value="#000000" style="width:26px;height:24px;border:none;cursor:pointer;" onchange="applyColor()">
+  <input type="color" id="bg-color" value="#ffffff" style="width:26px;height:24px;border:none;cursor:pointer;" onchange="applyBg()">
+  <div class="sep"></div>
+  <button onclick="formatNumber('currency')">$</button>
+  <button onclick="formatNumber('percent')">%</button>
+  <div class="sep"></div>
+  <button onclick="insertRow()">+F</button>
+  <button onclick="deleteRow()">-F</button>
+  <button onclick="insertCol()">+C</button>
+  <button onclick="deleteCol()">-C</button>
+  <div class="sep"></div>
+  <button onclick="sortCol(true)">A↓Z</button>
+  <button onclick="sortCol(false)">Z↓A</button>
+  <button onclick="openFilterModal()" title="Filtrar columna">🔽</button>
+  <div class="sep"></div>
+  <button onclick="openFindModal()">🔍</button>
+  <button onclick="openGotoModal()">📍</button>
+  <button onclick="openCommentModal()">💬</button>
+  <div class="sep"></div>
+  <button onclick="showChart()">📊</button>
+  <button onclick="toggleFreeze()">❄</button>
+  <button onclick="toggleDark()">🌙</button>
+  <div class="sep"></div>
+  <button onclick="zoomOut()">−</button>
+  <span class="zoom-label" id="zoom-label">100%</span>
+  <button onclick="zoomIn()">+</button>
+  <div class="sep"></div>
+  <button onclick="openShareModal()" style="background:#1565c0;">🔗</button>
+  <button onclick="importFile()" title="Importar CSV o Excel (.xlsx)">📥</button>
+  <button onclick="exportCSV()">CSV</button>
+  <button onclick="createClosetTemplate()" title="Plantilla El Clóset de Ron" style="background:#6a1b9a;">📋</button>
+  <button onclick="applyClosetFormulas()" title="Aplicar fórmulas Comisión y Monto" style="background:#e65100;">ƒx</button>
+  <button onclick="clearErrors()" title="Limpiar celdas con error">🧹</button>
+  <button onclick="openScriptModal()" title="Scripts / Macros" style="background:#6a1b9a;">&lt;/&gt;</button>
+  <button onclick="openProtectModal()">🔒</button>
+  <span class="status" id="status">Listo</span>
+</div>
+<div class="formula-bar">
+  <div class="cell-ref" id="cell-ref">A1</div>
+  <input type="text" id="formula-input" placeholder="Valor o fórmula (=SUM(A1:A10))" onkeydown="handleFormulaKey(event)">
+</div>
+<div class="spreadsheet-container" id="grid-container"><table id="spreadsheet"></table></div>
+<div class="sheets-bar" id="sheets-bar"></div>
+
+<div class="modal" id="books-modal"><div class="modal-content">
+  <h3>📚 Libros</h3>
+  <input type="text" id="book-search" placeholder="Buscar libro..." oninput="filterBooks()">
+  <div class="book-list" id="book-list"></div>
+  <input type="text" id="new-book-name" placeholder="Nombre del nuevo libro">
+  <div class="btn-row"><button class="btn btn-primary" onclick="createBook()">Crear</button><button class="btn btn-secondary" onclick="closeBooksModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="find-modal"><div class="modal-content">
+  <h3>🔍 Buscar y Reemplazar</h3>
+  <input type="text" id="find-text" placeholder="Buscar...">
+  <input type="text" id="replace-text" placeholder="Reemplazar por...">
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="findNext()">Buscar siguiente</button>
+    <button class="btn btn-secondary" onclick="replaceOne()">Reemplazar</button>
+    <button class="btn btn-secondary" onclick="replaceAll()">Reemplazar todo</button>
+    <button class="btn btn-secondary" onclick="closeFindModal()">Cerrar</button>
+  </div>
+</div></div>
+
+<div class="modal" id="goto-modal"><div class="modal-content">
+  <h3>📍 Ir a celda</h3>
+  <input type="text" id="goto-cell" placeholder="Ej: G45" onkeydown="if(event.key==='Enter')goToCell()">
+  <div class="btn-row"><button class="btn btn-primary" onclick="goToCell()">Ir</button><button class="btn btn-secondary" onclick="closeGotoModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="comment-modal"><div class="modal-content">
+  <h3>💬 Comentario</h3>
+  <p id="comment-cell-label">Celda: A1</p>
+  <textarea id="comment-text" placeholder="Escribe un comentario..."></textarea>
+  <div class="btn-row"><button class="btn btn-primary" onclick="saveComment()">Guardar</button><button class="btn btn-danger" onclick="deleteComment()">Eliminar</button><button class="btn btn-secondary" onclick="closeCommentModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="protect-modal"><div class="modal-content">
+  <h3>🔒 Proteger libro</h3>
+  <input type="password" id="protect-pass" placeholder="Contraseña">
+  <input type="password" id="protect-pass2" placeholder="Repetir contraseña">
+  <div class="btn-row"><button class="btn btn-primary" onclick="setPassword()">Proteger</button><button class="btn btn-danger" onclick="removePassword()">Quitar</button><button class="btn btn-secondary" onclick="closeProtectModal()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="share-modal"><div class="modal-content">
+  <h3>🔗 Compartir (público)</h3>
+  <p style="font-size:13px;margin-bottom:10px;line-height:1.4">Cualquiera con el enlace puede abrir el libro <b>sin necesidad de cuenta</b>. El enlace funciona directamente en el navegador.</p>
+  <div class="permission-box">
+    <label><input type="radio" name="perm" value="view" checked> Solo ver (recomendado)</label>
+    <label><input type="radio" name="perm" value="edit"> Puede editar</label>
+  </div>
+  <button class="btn btn-primary" onclick="generateShareLink()" style="width:100%;margin-bottom:12px;">Generar enlace público</button>
+  <textarea id="share-link" readonly placeholder="Aquí aparecerá el enlace..."></textarea>
+  <p id="share-info" style="font-size:12px;color:#666;margin:8px 0;"></p>
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="copyShareLink()">Copiar enlace</button>
+    <button class="btn btn-secondary" onclick="closeShareModal()">Cerrar</button>
+  </div>
+</div></div>
+
+<div class="modal" id="chart-modal"><div class="modal-content">
+  <h3>Gráfico</h3>
+  <input type="text" id="chart-range" placeholder="Ej: B2:B10">
+  <canvas id="chart-canvas" width="500" height="280"></canvas>
+  <div class="btn-row" style="margin-top:12px;"><button class="btn btn-primary" onclick="generateChart()">Generar</button><button class="btn btn-secondary" onclick="closeChart()">Cerrar</button></div>
+</div></div>
+
+<div class="modal" id="readonly-modal"><div class="modal-content">
+  <h3>👁 Solo lectura</h3>
+  <p>Este libro se abrió con un enlace público de <b>solo ver</b>.<br>No necesitas cuenta. Puedes explorar los datos pero no modificarlos.</p>
+  <div class="btn-row"><button class="btn btn-primary" onclick="closeReadonlyModal()">Entendido</button></div>
+</div></div>
+
+<div class="modal" id="filter-modal"><div class="modal-content">
+  <h3>🔽 Filtrar columna</h3>
+  <p id="filter-col-label" style="font-size:13px;margin-bottom:8px;">Columna: A</p>
+  <input type="text" id="filter-text" placeholder="Texto a buscar (vacío = quitar filtro)">
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="applyFilter()">Aplicar filtro</button>
+    <button class="btn btn-secondary" onclick="clearFilter()">Quitar filtro</button>
+    <button class="btn btn-secondary" onclick="closeFilterModal()">Cerrar</button>
+  </div>
+</div></div>
+
+<div class="modal" id="script-modal"><div class="modal-content" style="max-width:640px;">
+  <h3>&lt;/&gt; Scripts</h3>
+  <p style="font-size:12px;margin-bottom:8px;line-height:1.4">Escribe JavaScript para automatizar la hoja. API disponible: <code>get</code>, <code>set</code>, <code>val</code>, <code>forEachRow</code>, <code>alert</code>, <code>log</code>.</p>
+  <select id="script-examples" onchange="loadScriptExample()" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+    <option value="">— Ejemplos —</option>
+    <option value="sum">Sumar columna de precios</option>
+    <option value="fillDates">Marcar entregas del día</option>
+    <option value="recalc">Recalcular Comisión y Monto</option>
+    <option value="countDev">Contar devoluciones</option>
+    <option value="clearCol">Limpiar una columna</option>
+  </select>
+  <select id="script-saved" onchange="loadSavedScript()" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+    <option value="">— Mis scripts guardados —</option>
+  </select>
+  <textarea id="script-code" style="width:100%;min-height:180px;font-family:Consolas,monospace;font-size:12px;padding:10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);" placeholder="// Ejemplo:
+// set('A1', 'Hola')
+// log(val('B5'))"></textarea>
+  <pre id="script-output" style="background:#1e1e1e;color:#d4d4d4;padding:10px;border-radius:6px;font-size:11px;max-height:120px;overflow:auto;margin:8px 0;white-space:pre-wrap;"></pre>
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="runScript()">▶ Ejecutar</button>
+    <button class="btn btn-secondary" onclick="saveCurrentScript()">💾 Guardar</button>
+    <button class="btn btn-secondary" id="script-delete-btn" onclick="deleteSavedScript()" style="display:none;color:#c62828;">🗑 Eliminar guardado</button>
+    <button class="btn btn-secondary" onclick="document.getElementById('script-code').value='';document.getElementById('script-output').textContent='';document.getElementById('script-saved').value='';document.getElementById('script-delete-btn').style.display='none'">Limpiar</button>
+    <button class="btn btn-secondary" onclick="closeScriptModal()">Cerrar</button>
+  </div>
+</div></div>
+
+<input type="file" id="file-input" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none" onchange="handleImport(event)">
+
+<script>
+const ROWS=50000,COLS=60,VIEW_ROWS=120,ROW_H=26;
+let store={workbooks:{},currentBookId:null},currentSheet=0,selectedCell="A1",editingCell=null,history=[],freezeOn=false,isReadOnly=false,zoomLevel=1,findIndex=-1,findResults=[],viewStart=0,maxUsedRow=0,filterCol=-1,filterText="";
+function uid(){return"wb_"+Date.now()+"_"+Math.random().toString(36).slice(2,7)}
+function getCurrentBook(){return store.workbooks[store.currentBookId]}
+function getSheets(){return getCurrentBook()?.sheets||[]}
+function getData(){return getSheets()[currentSheet]?.data||{}}
+function getCell(id){return getData()[id]||null}
+function colName(n){let s="";while(n>=0){s=String.fromCharCode(65+(n%26))+s;n=Math.floor(n/26)-1}return s}
+function cellId(r,c){return colName(c)+(r+1)}
+function parseId(id){const m=id.match(/^([A-Z]+)(\d+)$/);if(!m)return null;let col=0;for(let ch of m[1])col=col*26+(ch.charCodeAt(0)-64);return{row:+m[2]-1,col:col-1}}
+function setCell(id,value,formula=null,style=null,numberFormat=null,comment=undefined,skipLogic=false){
+  if(isReadOnly){setStatus("Solo lectura");return}
+  if(getCurrentBook()?.password&&!window._unlocked){setStatus("Libro protegido");return}
+  saveHistory();
+  const data=getData();
+  if(!data[id])data[id]={};
+  const cell=data[id];
+  cell.value=value;
+  if(formula!==null)cell.formula=formula;
+  if(style)cell.style={...(cell.style||{}),...style};
+  if(numberFormat)cell.numberFormat=numberFormat;
+  if(comment!==undefined)cell.comment=comment;
+  if(formula&&formula.startsWith("="))cell.display=evaluate(formula,id);
+  else cell.display=formatDisplay(value,cell.numberFormat);
+  if(typeof dupCache!=="undefined")dupCache={sheetIdx:-1,cols:{}}; // invalida caché de "duplicateValues" al editar
+  recalcAllFormulas(id);
+  save();
+  updateDisplay(id);
+  if(!skipLogic)applyClosetLogic(id);
+}
+function recalcAllFormulas(changedId){
+  const data=getData();
+  const changed=parseId(changedId);
+  let count=0;
+  for(const [id,cell] of Object.entries(data)){
+    if(!cell.formula||!cell.formula.startsWith("="))continue;
+    const pos=parseId(id);
+    if(changed&&pos&&Math.abs(pos.row-changed.row)>30&&count>200)continue;
+    try{
+      const newVal=evaluate(cell.formula,id);
+      // Nunca guardar #ERROR! — conservar valor anterior
+      if(newVal==="#ERROR!"||newVal===null||newVal===undefined)continue;
+      if(String(newVal)!==String(cell.display)){
+        cell.display=newVal;
+        cell.value=newVal;
+        updateDisplay(id);
+        count++;
+      }
+    }catch(e){}
+  }
+  if(count>0)setStatus("Recalculadas "+count+" fórmulas");
+}
+function clearErrors(){
+  if(isReadOnly)return;
+  saveHistory();
+  const data=getData();
+  let n=0;
+  for(const [id,cell] of Object.entries(data)){
+    if(String(cell.display)==="#ERROR!"||String(cell.value)==="#ERROR!"){
+      if(cell.formula){
+        // Quitar fórmula rota y dejar vacío
+        delete cell.formula;
+        cell.value="";
+        cell.display="";
+      }else{
+        cell.value="";
+        cell.display="";
+      }
+      n++;
+    }
+  }
+  save();render();
+  setStatus(n?"Se limpiaron "+n+" errores":"No había errores");
+}
+function getCellVal(id){
+  const c=getCell(id);
+  return c?(c.display??c.value??""):"";
+}
+function isClosetSheet(){
+  const h1=String(getCellVal("A5")).toUpperCase();
+  const h2=String(getCellVal("I5")).toUpperCase();
+  const h3=String(getCellVal("L5")).toUpperCase();
+  return h1.includes("LIQUID")||h2.includes("PRECIO")||h3.includes("MONTO");
+}
+function applyClosetLogic(changedId){
+  if(!isClosetSheet())return;
+  const p=parseId(changedId);
+  if(!p||p.row<5)return;
+  const r=p.row, col=p.col;
+  const envioRate=parseFloat(getCellVal("K2"))||3.95;
+  const comisionRate=parseFloat(getCellVal("L2"))||0.025;
+
+  // Cambió PRECIO (I) o ENVIO (J) → recalcular Comisión y Monto
+  if(col===8||col===9){
+    recalcRowAmounts(r,envioRate,comisionRate);
+    render();
+    setStatus("Comisión y Monto actualizados");
+  }
+  // Escribió fecha en ENTREGA (B) o F.ENTREGA (M)
+  if(col===1||col===12){
+    const val=String(getCellVal(changedId)).trim();
+    if(val.length>=6){
+      setCell(cellId(r,0),"P",null,null,null,undefined,true);          // LIQUIDADO
+      setCell(cellId(r,14),"PAGADO",null,null,null,undefined,true);    // F.PAGO
+      if(col===1&&!String(getCellVal(cellId(r,12))).trim()){
+        setCell(cellId(r,12),val,null,null,null,undefined,true);       // copiar a F.ENTREGA
+      }
+      if(col===12&&!String(getCellVal(cellId(r,1))).trim()){
+        setCell(cellId(r,1),val,null,null,null,undefined,true);        // copiar a ENTREGA
+      }
+      // Asegurar ENVIO si está vacío
+      if(!String(getCellVal(cellId(r,9))).trim()){
+        setCell(cellId(r,9),String(envioRate),null,null,null,undefined,true);
+      }
+      recalcRowAmounts(r,envioRate,comisionRate);
+      render();
+      setStatus("Fecha → Liquidado + Pagado + Monto calculado");
+    }
+  }
+  // Escribió DEV en MONTO
+  if(col===11){
+    const val=String(getCellVal(changedId)).toUpperCase();
+    if(val==="DEV"||val.includes("DEVOLUC")){
+      setCell(cellId(r,12),"DEV",null,null,null,undefined,true);
+      render();
+    }
+  }
+}
+function recalcRowAmounts(r,envioRate,comisionRate){
+  const precio=parseFloat(getCellVal(cellId(r,8)));
+  let envio=parseFloat(getCellVal(cellId(r,9)));
+  if(isNaN(envio))envio=envioRate;
+  if(isNaN(precio))return;
+  let comision=0;
+  if(precio===0) comision=0;
+  else comision=Math.max(1, Math.round(precio*comisionRate*100)/100);
+  const curMonto=String(getCellVal(cellId(r,11))).toUpperCase();
+  let monto;
+  if(curMonto==="DEV"||curMonto.includes("DEVOLUC")) monto="DEV";
+  else if(precio===0) monto=Math.round((-envio)*100)/100;
+  else monto=Math.round((precio-envio-comision)*100)/100;
+  setCell(cellId(r,9),String(envio),null,null,null,undefined,true);
+  setCell(cellId(r,10),String(comision),null,null,null,undefined,true);
+  setCell(cellId(r,11),String(monto),null,null,null,undefined,true);
+}
+function formatDisplay(val,fmt){if(val===""||val==null)return"";const num=parseFloat(val);if(isNaN(num))return val;if(fmt==="currency")return"$"+num.toFixed(2);if(fmt==="percent")return(num*100).toFixed(1)+"%";return num}
+function applyConditionalFormat(td,cell){
+  if(!td)return;
+  td.classList.remove("cf-dev","cf-pagado","cf-resumen","cf-header","cf-liquidado","negative");
+  const val=String(cell?.display??cell?.value??"").toUpperCase().trim();
+  if(val==="DEV"||val.includes("DEVOLUC"))td.classList.add("cf-dev");
+  else if(val==="PAGADO")td.classList.add("cf-pagado");
+  else if(val==="P"&&!cell?.style?.bg)td.classList.add("cf-liquidado");
+  else if(!isNaN(parseFloat(val))&&parseFloat(val)<0)td.classList.add("negative");
+  // Filas de resumen (solo número grande o vacío en columnas clave)
+  if(cell?.style?.bg==="#fff9c4"||cell?.style?.resumen)td.classList.add("cf-resumen");
+}
+/* ============ FORMATOS CONDICIONALES REALES DE EXCEL ============
+   AUDITORÍA 2026-08-11: antes NO se importaba el formato condicional real
+   del Excel (las reglas cfRule/dxf de OOXML) — solo existía la lógica fija
+   de arriba (applyConditionalFormat), pensada para las hojas tipo "Closet".
+   Ahora, al importar un .xlsx, además de leer las celdas con SheetJS se lee
+   el archivo también con JSZip para sacar las reglas de conditionalFormatting
+   y sus estilos (dxfs) del XML interno, y se guardan en sheet.condFormats.
+   Estas reglas se evalúan aquí, en cada celda visible, y se les aplica su
+   color/negrita real de Excel, encima del formato fijo de arriba. */
+function getSheetCondFormats(){return getSheets()[currentSheet]?.condFormats||[]}
+let dupCache={sheetIdx:-1,cols:{}};
+function getDuplicateSet(col){
+  if(dupCache.sheetIdx!==currentSheet)dupCache={sheetIdx:currentSheet,cols:{}};
+  if(dupCache.cols[col])return dupCache.cols[col];
+  calcMaxUsedRow();
+  const counts={};
+  for(let r=0;r<=maxUsedRow;r++){
+    const v=String(getCellVal(cellId(r,col))).trim();
+    if(v==="")continue;
+    counts[v]=(counts[v]||0)+1;
+  }
+  const dupSet=new Set(Object.keys(counts).filter(k=>counts[k]>1));
+  dupCache.cols[col]=dupSet;
+  return dupSet;
+}
+function cellInSqref(id,sqref){
+  const p=parseId(id);if(!p)return null;
+  const ranges=sqref.trim().split(/\s+/);
+  for(const rg of ranges){
+    const parts=rg.split(":");
+    const s=parseId(parts[0]);const e=parts[1]?parseId(parts[1]):s;
+    if(!s||!e)continue;
+    const r0=Math.min(s.row,e.row),r1=Math.max(s.row,e.row);
+    const c0=Math.min(s.col,e.col),c1=Math.max(s.col,e.col);
+    if(p.row>=r0&&p.row<=r1&&p.col>=c0&&p.col<=c1)return s;
+  }
+  return null;
+}
+function compareCellIs(num,op,n1,n2){
+  if(isNaN(num))return false;
+  switch(op){
+    case"greaterThan":return num>n1;case"lessThan":return num<n1;
+    case"greaterThanOrEqual":return num>=n1;case"lessThanOrEqual":return num<=n1;
+    case"equal":return num===n1;case"notEqual":return num!==n1;
+    case"between":return num>=Math.min(n1,n2)&&num<=Math.max(n1,n2);
+    case"notBetween":return!(num>=Math.min(n1,n2)&&num<=Math.max(n1,n2));
+    default:return false;
+  }
+}
+function evalCondFormat(id,cell){
+  const rules=getSheetCondFormats();
+  if(!rules||!rules.length)return null;
+  const p=parseId(id);if(!p)return null;
+  const val=String(cell?.display??cell?.value??"");
+  for(const rule of rules){
+    const anchor=cellInSqref(id,rule.sqref);
+    if(!anchor)continue;
+    const dRow=p.row-anchor.row,dCol=p.col-anchor.col;
+    let hit=false;
+    try{
+      if(rule.type==="containsText"||rule.type==="notContainsText"){
+        const has=val.toUpperCase().includes(String(rule.text||"").toUpperCase());
+        hit=rule.type==="containsText"?has:!has;
+      }else if(rule.type==="duplicateValues"){
+        if(val.trim()!=="")hit=getDuplicateSet(p.col).has(val.trim());
+      }else if(rule.type==="cellIs"){
+        const num=parseFloat(val.replace(/[$,]/g,""));
+        const f1=rule.formulas[0]!==undefined?evaluate("="+shiftFormulaRefs(rule.formulas[0],dRow,dCol),id):undefined;
+        const f2=rule.formulas[1]!==undefined?evaluate("="+shiftFormulaRefs(rule.formulas[1],dRow,dCol),id):undefined;
+        hit=compareCellIs(num,rule.operator,toNum(f1),toNum(f2));
+      }else if(rule.type==="expression"&&rule.formulas[0]){
+        const res=evaluate("="+shiftFormulaRefs(rule.formulas[0],dRow,dCol),id);
+        hit=(res===1||res===true);
+      }
+    }catch(e){hit=false}
+    if(hit)return rule.dxf;
+  }
+  return null;
+}
+function applyCellBorder(td,border){
+  td.style.borderTop=border?.top?`${borderWidth(border.top.style)} solid ${border.top.color}`:"";
+  td.style.borderRight=border?.right?`${borderWidth(border.right.style)} solid ${border.right.color}`:"";
+  td.style.borderBottom=border?.bottom?`${borderWidth(border.bottom.style)} solid ${border.bottom.color}`:"";
+  td.style.borderLeft=border?.left?`${borderWidth(border.left.style)} solid ${border.left.color}`:"";
+}
+function updateDisplay(id){
+  const td=document.querySelector(`td[data-cell="${id}"]`);
+  if(!td)return;
+  const cell=getCell(id);
+  if(cell){
+    td.textContent=cell.display??cell.value??"";
+    td.style.fontWeight=cell.style?.bold?"bold":"";
+    td.style.fontStyle=cell.style?.italic?"italic":"";
+    td.style.color=cell.style?.color||"";
+    td.style.background=cell.style?.bg||"";
+    applyCellBorder(td,cell.style?.border);
+    applyConditionalFormat(td,cell);
+    const cf=evalCondFormat(id,cell);
+    if(cf){
+      if(cf.bg)td.style.background=cf.bg;
+      if(cf.color)td.style.color=cf.color;
+      if(cf.bold)td.style.fontWeight="bold";
+      if(cf.italic)td.style.fontStyle="italic";
+    }
+    td.classList.toggle("has-comment",!!cell.comment);
+    td.title=cell.comment||"";
+  }else{
+    td.textContent="";td.style.cssText="";td.className="";td.title="";
+  }
+}
+function calcMaxUsedRow(){
+  let max=0;
+  const data=getData();
+  for(const id of Object.keys(data)){
+    const p=parseId(id);
+    if(p&&p.row>max)max=p.row;
+  }
+  maxUsedRow=Math.min(Math.max(max+20,VIEW_ROWS),ROWS-1);
+}
+function getVisibleRows(){
+  calcMaxUsedRow();
+  const rows=[];
+  for(let r=0;r<=maxUsedRow;r++){
+    if(filterCol>=0&&filterText){
+      const v=String(getCell(cellId(r,filterCol))?.display??getCell(cellId(r,filterCol))?.value??"").toLowerCase();
+      if(!v.includes(filterText.toLowerCase()))continue;
+    }
+    rows.push(r);
+  }
+  return rows;
+}
+function render(){
+  const visible=getVisibleRows();
+  const table=document.getElementById("spreadsheet");
+  table.innerHTML="";
+  table.style.transform=`scale(${zoomLevel})`;
+  // Header
+  const hr=document.createElement("tr");
+  const corner=document.createElement("th");corner.className="row-header";hr.appendChild(corner);
+  for(let c=0;c<COLS;c++){
+    const th=document.createElement("th");
+    th.textContent=colName(c)+(filterCol===c?" 🔽":"");
+    if(freezeOn&&c===0)th.classList.add("frozen-col");
+    hr.appendChild(th);
+  }
+  table.appendChild(hr);
+  const total=visible.length;
+  const startIdx=Math.min(viewStart,Math.max(0,total-1));
+  const endIdx=Math.min(startIdx+VIEW_ROWS,total);
+  if(startIdx>0){
+    const spacer=document.createElement("tr");
+    const td=document.createElement("td");
+    td.colSpan=COLS+1;td.style.height=(startIdx*ROW_H)+"px";td.style.padding="0";td.style.border="none";
+    spacer.appendChild(td);table.appendChild(spacer);
+  }
+  for(let i=startIdx;i<endIdx;i++){
+    const r=visible[i];
+    const tr=document.createElement("tr");
+    const rh=document.createElement("th");rh.className="row-header";rh.textContent=r+1;tr.appendChild(rh);
+    for(let c=0;c<COLS;c++){
+      const td=document.createElement("td");
+      const id=cellId(r,c);
+      td.dataset.cell=id;
+      if(freezeOn&&c===0)td.classList.add("frozen-col");
+      const cell=getCell(id);
+      if(cell){
+        td.textContent=cell.display??cell.value??"";
+        if(cell.style?.bold)td.style.fontWeight="bold";
+        if(cell.style?.italic)td.style.fontStyle="italic";
+        if(cell.style?.color)td.style.color=cell.style.color;
+        if(cell.style?.bg)td.style.background=cell.style.bg;
+        if(cell.style?.border)applyCellBorder(td,cell.style.border);
+        applyConditionalFormat(td,cell);
+        const cf=evalCondFormat(id,cell);
+        if(cf){
+          if(cf.bg)td.style.background=cf.bg;
+          if(cf.color)td.style.color=cf.color;
+          if(cf.bold)td.style.fontWeight="bold";
+          if(cf.italic)td.style.fontStyle="italic";
+        }
+        if(cell.comment){td.classList.add("has-comment");td.title=cell.comment}
+      }
+      td.onclick=()=>select(id);
+      td.ondblclick=()=>{if(!isReadOnly)edit(id)};
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  const remaining=total-endIdx;
+  if(remaining>0){
+    const spacer=document.createElement("tr");
+    const td=document.createElement("td");
+    td.colSpan=COLS+1;td.style.height=(remaining*ROW_H)+"px";td.style.padding="0";td.style.border="none";
+    spacer.appendChild(td);table.appendChild(spacer);
+  }
+  select(selectedCell);
+  renderSheetTabs();
+  updateBookSelect();
+}
+let scrollTimer=null;
+function onGridScroll(){
+  if(scrollTimer)return;
+  scrollTimer=setTimeout(()=>{
+    scrollTimer=null;
+    const cont=document.getElementById("grid-container");
+    if(!cont)return;
+    const scrollTop=cont.scrollTop/zoomLevel;
+    const newStart=Math.max(0,Math.floor(scrollTop/ROW_H)-5);
+    if(Math.abs(newStart-viewStart)>8){
+      const prevSel=selectedCell;
+      const savedScroll=cont.scrollTop;
+      viewStart=Math.min(newStart,Math.max(0,maxUsedRow-VIEW_ROWS+20));
+      render();
+      cont.scrollTop=savedScroll;
+      if(prevSel)select(prevSel);
+    }
+  },50);
+}
+function renderSheetTabs(){const bar=document.getElementById("sheets-bar");bar.innerHTML="";getSheets().forEach((s,i)=>{const tab=document.createElement("div");tab.className="sheet-tab"+(i===currentSheet?" active":"");tab.textContent=s.name;tab.onclick=()=>switchSheet(i);bar.appendChild(tab)});if(!isReadOnly){const btn=document.createElement("button");btn.textContent="+";btn.style.cssText="margin-left:6px;padding:2px 8px;font-size:14px;";btn.onclick=addSheet;bar.appendChild(btn)}}
+function updateBookSelect(){const sel=document.getElementById("book-select");sel.innerHTML="";Object.keys(store.workbooks).forEach(id=>{const opt=document.createElement("option");opt.value=id;opt.textContent=store.workbooks[id].name+(store.workbooks[id].password?" 🔒":"");if(id===store.currentBookId)opt.selected=true;sel.appendChild(opt)})}
+function select(id){if(editingCell)finishEdit();document.querySelectorAll("td.selected").forEach(e=>e.classList.remove("selected"));const td=document.querySelector(`td[data-cell="${id}"]`);if(td){td.classList.add("selected");selectedCell=id;document.getElementById("cell-ref").textContent=id;const cell=getCell(id);document.getElementById("formula-input").value=cell?.formula||cell?.value||""}}
+function edit(id){if(isReadOnly||(getCurrentBook()?.password&&!window._unlocked))return;select(id);const td=document.querySelector(`td[data-cell="${id}"]`);if(!td)return;editingCell=id;td.classList.add("editing");const cell=getCell(id);const input=document.createElement("input");input.value=cell?.formula||cell?.value||"";input.onkeydown=e=>{if(e.key==="Enter"){finishEdit();move(id,1,0)}if(e.key==="Escape")cancelEdit();if(e.key==="Tab"){e.preventDefault();finishEdit();move(id,0,1)}};input.onblur=finishEdit;td.innerHTML="";td.appendChild(input);input.focus();input.select()}
+function finishEdit(){if(!editingCell)return;const td=document.querySelector(`td[data-cell="${editingCell}"]`);const input=td?.querySelector("input");if(input){const val=input.value.trim();if(val.startsWith("="))setCell(editingCell,evaluate(val,editingCell),val);else setCell(editingCell,val)}editingCell=null;render()}
+function cancelEdit(){editingCell=null;render()}
+function handleFormulaKey(e){if(e.key==="Enter"){if(isReadOnly)return;const val=e.target.value.trim();if(val.startsWith("="))setCell(selectedCell,evaluate(val,selectedCell),val);else setCell(selectedCell,val);render()}}
+function move(id,dRow,dCol){const p=parseId(id);if(!p)return;const nr=Math.max(0,Math.min(ROWS-1,p.row+dRow));const nc=Math.max(0,Math.min(COLS-1,p.col+dCol));if(nr<viewStart||nr>=viewStart+VIEW_ROWS){viewStart=Math.max(0,nr-20);render()}select(cellId(nr,nc))}
+/* ============ MOTOR DE FÓRMULAS ============
+   AUDITORÍA 2026-08-11: el motor anterior encadenaba reemplazos con regex
+   sobre el texto completo de la fórmula. Eso se rompía con fórmulas anidadas
+   típicas de Excel real, como IF(AND(COUNTA(C10),B10="P"),"PAGADO",""): la
+   regex de IF usa [^,]+ (para antes de la primera coma) así que cortaba mal
+   en la coma que está DENTRO de AND(...). Además, TODA referencia de celda
+   se sustituía siempre por un número (parseFloat), así que comparar texto
+   como B10="P" jamás podía dar verdadero. Ahora se tokeniza la fórmula y se
+   arma un árbol (parser recursivo real), como hace cualquier motor de hoja
+   de cálculo, así que el anidado y las comparaciones de texto funcionan. */
+function tokenizeFormula(expr){
+  const tokens=[];let i=0;const n=expr.length;
+  while(i<n){
+    const ch=expr[i];
+    if(ch===" "||ch==="\t"||ch==="\n"){i++;continue}
+    if(ch==='"'){
+      let j=i+1,s="";
+      while(j<n){
+        if(expr[j]==='"'){ if(expr[j+1]==='"'){s+='"';j+=2;continue} break; }
+        s+=expr[j];j++;
+      }
+      tokens.push({type:"STRING",value:s});i=j+1;continue;
+    }
+    if(/[0-9]/.test(ch)||(ch==="."&&/[0-9]/.test(expr[i+1]||""))){
+      let j=i;
+      while(j<n&&/[0-9.]/.test(expr[j]))j++;
+      if((expr[j]==="E"||expr[j]==="e")&&/[0-9+-]/.test(expr[j+1]||"")){
+        j++;if(/[+-]/.test(expr[j]))j++;
+        while(j<n&&/[0-9]/.test(expr[j]))j++;
+      }
+      tokens.push({type:"NUMBER",value:parseFloat(expr.slice(i,j))});i=j;continue;
+    }
+    if(/[A-Za-z$]/.test(ch)){
+      const m=expr.slice(i).match(/^(\$?[A-Za-z]{1,3}\$?[0-9]+)(?!\()/);
+      if(m){tokens.push({type:"CELLREF",value:m[1].replace(/\$/g,"").toUpperCase()});i+=m[1].length;continue}
+      let j=i;
+      while(j<n&&/[A-Za-z_0-9.]/.test(expr[j]))j++;
+      tokens.push({type:"IDENT",value:expr.slice(i,j).toUpperCase()});i=j;continue;
+    }
+    if(ch==="<"&&expr[i+1]===">"){tokens.push({type:"OP",value:"<>"});i+=2;continue}
+    if(ch==="<"&&expr[i+1]==="="){tokens.push({type:"OP",value:"<="});i+=2;continue}
+    if(ch===">"&&expr[i+1]==="="){tokens.push({type:"OP",value:">="});i+=2;continue}
+    if("+-*/^&=<>".includes(ch)){tokens.push({type:"OP",value:ch});i++;continue}
+    if(ch==="("){tokens.push({type:"LPAREN"});i++;continue}
+    if(ch===")"){tokens.push({type:"RPAREN"});i++;continue}
+    if(ch===","){tokens.push({type:"COMMA"});i++;continue}
+    if(ch===":"){tokens.push({type:"COLON"});i++;continue}
+    if(ch==="%"){tokens.push({type:"PERCENT"});i++;continue}
+    i++;
+  }
+  return tokens;
+}
+function parseFormulaExpr(tokens){
+  let pos=0;const peek=()=>tokens[pos];const next=()=>tokens[pos++];
+  function parseComparison(){
+    let left=parseConcat();
+    while(peek()&&peek().type==="OP"&&["=","<>","<",">","<=",">="].includes(peek().value)){
+      const op=next().value;left={type:"cmp",op,left,right:parseConcat()};
+    }
+    return left;
+  }
+  function parseConcat(){
+    let left=parseAdd();
+    while(peek()&&peek().type==="OP"&&peek().value==="&"){next();left={type:"concat",left,right:parseAdd()}}
+    return left;
+  }
+  function parseAdd(){
+    let left=parseMul();
+    while(peek()&&peek().type==="OP"&&(peek().value==="+"||peek().value==="-")){
+      const op=next().value;left={type:"arith",op,left,right:parseMul()};
+    }
+    return left;
+  }
+  function parseMul(){
+    let left=parsePow();
+    while(peek()&&peek().type==="OP"&&(peek().value==="*"||peek().value==="/")){
+      const op=next().value;left={type:"arith",op,left,right:parsePow()};
+    }
+    return left;
+  }
+  function parsePow(){
+    let left=parseUnary();
+    while(peek()&&peek().type==="OP"&&peek().value==="^"){next();left={type:"arith",op:"^",left,right:parseUnary()}}
+    return left;
+  }
+  function parseUnary(){
+    if(peek()&&peek().type==="OP"&&peek().value==="-"){next();return{type:"neg",value:parseUnary()}}
+    return parsePostfix();
+  }
+  function parsePostfix(){
+    let node=parsePrimary();
+    while(peek()&&peek().type==="PERCENT"){next();node={type:"pct",value:node}}
+    return node;
+  }
+  function parsePrimary(){
+    const tok=peek();
+    if(!tok)return{type:"num",value:0};
+    if(tok.type==="NUMBER"){next();return{type:"num",value:tok.value}}
+    if(tok.type==="STRING"){next();return{type:"str",value:tok.value}}
+    if(tok.type==="CELLREF"){
+      next();
+      if(peek()&&peek().type==="COLON"&&tokens[pos+1]&&tokens[pos+1].type==="CELLREF"){
+        next();const end=next();return{type:"range",start:tok.value,end:end.value};
+      }
+      return{type:"ref",value:tok.value};
+    }
+    if(tok.type==="IDENT"){
+      next();
+      if(peek()&&peek().type==="LPAREN"){
+        next();const args=[];
+        if(peek()&&peek().type!=="RPAREN"){
+          args.push(parseComparison());
+          while(peek()&&peek().type==="COMMA"){next();args.push(parseComparison())}
+        }
+        if(peek()&&peek().type==="RPAREN")next();
+        return{type:"call",name:tok.value,args};
+      }
+      return{type:"ident",value:tok.value};
+    }
+    if(tok.type==="LPAREN"){next();const e=parseComparison();if(peek()&&peek().type==="RPAREN")next();return e}
+    next();return{type:"num",value:0};
+  }
+  return parseComparison();
+}
+function cellRawValue(id){const c=getCell(id);return c?.display??c?.value??""}
+function toNum(v){if(typeof v==="number")return v;if(v===""||v==null)return 0;const n=parseFloat(String(v).replace(/[$,]/g,""));return isNaN(n)?0:n}
+function toStrFormula(v){if(v==null)return"";if(typeof v==="boolean")return v?"TRUE":"FALSE";return String(v)}
+function truthyFormula(v){if(typeof v==="boolean")return v;if(typeof v==="number")return v!==0;if(v==="")return false;const s=String(v).toUpperCase();if(s==="TRUE")return true;if(s==="FALSE")return false;return true}
+function nodeToRangeText(node){if(node.type==="range")return node.start+":"+node.end;if(node.type==="ref")return node.value;return null}
+function counta(rangeText){return expand(rangeText).filter(id=>{const c=getCell(id);const v=c?.display??c?.value??"";return String(v).trim()!==""}).length}
+function evalNode(node,selfId){
+  switch(node.type){
+    case "num":return node.value;
+    case "str":return node.value;
+    case "ident":if(node.value==="TRUE")return true;if(node.value==="FALSE")return false;return node.value;
+    case "ref":{
+      if(selfId&&node.value===String(selfId).replace(/\$/g,"").toUpperCase())return 0;
+      const raw=cellRawValue(node.value);
+      if(raw==="")return"";
+      const n=parseFloat(String(raw).replace(/[$,]/g,""));
+      return isNaN(n)?String(raw):n;
+    }
+    case "range":return null;
+    case "neg":return -toNum(evalNode(node.value,selfId));
+    case "pct":return toNum(evalNode(node.value,selfId))/100;
+    case "concat":return toStrFormula(evalNode(node.left,selfId))+toStrFormula(evalNode(node.right,selfId));
+    case "arith":{
+      const l=toNum(evalNode(node.left,selfId)),r=toNum(evalNode(node.right,selfId));
+      switch(node.op){case"+":return l+r;case"-":return l-r;case"*":return l*r;case"/":return r===0?"#DIV/0!":l/r;case"^":return Math.pow(l,r)}
+      break;
+    }
+    case "cmp":{
+      const l=evalNode(node.left,selfId),r=evalNode(node.right,selfId);
+      const bothNumeric=(typeof l==="number"||l==="")&&(typeof r==="number"||r==="");
+      let a,b;
+      if(bothNumeric){a=toNum(l);b=toNum(r)}else{a=toStrFormula(l).toUpperCase();b=toStrFormula(r).toUpperCase()}
+      switch(node.op){case"=":return a===b;case"<>":return a!==b;case"<":return a<b;case">":return a>b;case"<=":return a<=b;case">=":return a>=b}
+      break;
+    }
+    case "call":return evalFunction(node.name,node.args,selfId);
+  }
+  return 0;
+}
+function evalFunction(name,argNodes,selfId){
+  const arg=(i)=>evalNode(argNodes[i],selfId);
+  const rangeText=(i)=>nodeToRangeText(argNodes[i])||toStrFormula(arg(i));
+  switch(name){
+    case "SUM":return argNodes.reduce((s,a)=>{const rt=nodeToRangeText(a);return s+(rt?sum(rt):toNum(evalNode(a,selfId)))},0);
+    case "AVERAGE":{let v=[];argNodes.forEach(a=>{const rt=nodeToRangeText(a);if(rt)v=v.concat(nums(rt));else v.push(toNum(evalNode(a,selfId)))});return v.length?v.reduce((x,y)=>x+y,0)/v.length:0}
+    case "MAX":{let v=[];argNodes.forEach(a=>{const rt=nodeToRangeText(a);if(rt)v=v.concat(nums(rt));else v.push(toNum(evalNode(a,selfId)))});return v.length?Math.max(...v):0}
+    case "MIN":{let v=[];argNodes.forEach(a=>{const rt=nodeToRangeText(a);if(rt)v=v.concat(nums(rt));else v.push(toNum(evalNode(a,selfId)))});return v.length?Math.min(...v):0}
+    case "COUNT":{let c=0;argNodes.forEach(a=>{const rt=nodeToRangeText(a);if(rt)c+=nums(rt).length;else if(typeof evalNode(a,selfId)==="number")c++});return c}
+    case "COUNTA":{let c=0;argNodes.forEach(a=>{const rt=nodeToRangeText(a);if(rt)c+=counta(rt);else{const v=evalNode(a,selfId);if(toStrFormula(v).trim()!=="")c++}});return c}
+    case "SUMIF":{const rt=rangeText(0),crit=evalNode(argNodes[1],selfId),sr=argNodes[2]?rangeText(2):rt;return sumif(rt,String(crit),sr)}
+    case "COUNTIF":{const rt=rangeText(0),crit=evalNode(argNodes[1],selfId);return countif(rt,String(crit))}
+    case "IF":{const cond=evalNode(argNodes[0],selfId);return truthyFormula(cond)?(argNodes[1]!==undefined?evalNode(argNodes[1],selfId):""):(argNodes[2]!==undefined?evalNode(argNodes[2],selfId):"")}
+    case "IFERROR":{try{const v=evalNode(argNodes[0],selfId);if(typeof v==="string"&&v.startsWith("#"))return evalNode(argNodes[1],selfId);return v}catch(e){return evalNode(argNodes[1],selfId)}}
+    case "ROUND":return Number(toNum(arg(0)).toFixed(toNum(arg(1))));
+    case "ABS":return Math.abs(toNum(arg(0)));
+    case "POWER":return Math.pow(toNum(arg(0)),toNum(arg(1)));
+    case "SQRT":return Math.sqrt(toNum(arg(0)));
+    case "CONCAT":case "CONCATENATE":return argNodes.map(a=>toStrFormula(evalNode(a,selfId))).join("");
+    case "LEN":return toStrFormula(arg(0)).length;
+    case "LEFT":return toStrFormula(arg(0)).slice(0,argNodes[1]!==undefined?toNum(arg(1)):1);
+    case "RIGHT":{const n=argNodes[1]!==undefined?toNum(arg(1)):1;return n===0?"":toStrFormula(arg(0)).slice(-n)}
+    case "MID":return toStrFormula(arg(0)).substr(toNum(arg(1))-1,toNum(arg(2)));
+    case "TRIM":return toStrFormula(arg(0)).trim();
+    case "UPPER":return toStrFormula(arg(0)).toUpperCase();
+    case "LOWER":return toStrFormula(arg(0)).toLowerCase();
+    case "AND":return argNodes.every(a=>truthyFormula(evalNode(a,selfId)));
+    case "OR":return argNodes.some(a=>truthyFormula(evalNode(a,selfId)));
+    case "NOT":return !truthyFormula(arg(0));
+    case "ISERROR":{const v=arg(0);return typeof v==="string"&&v.startsWith("#")}
+    case "SEARCH":case "FIND":{const needle=toStrFormula(arg(0)).toUpperCase();const hay=toStrFormula(arg(1)).toUpperCase();const idx=hay.indexOf(needle);return idx===-1?"#VALUE!":idx+1}
+    case "VLOOKUP":return vlookup(toStrFormula(arg(0)),rangeText(1),toNum(arg(2)),argNodes[3]!==undefined?toStrFormula(arg(3)):undefined);
+    case "HLOOKUP":return hlookup(toStrFormula(arg(0)),rangeText(1),toNum(arg(2)),argNodes[3]!==undefined?toStrFormula(arg(3)):undefined);
+    case "INDEX":return indexFn(rangeText(0),toNum(arg(1)),argNodes[2]!==undefined?toNum(arg(2)):1);
+    case "MATCH":return matchFn(toStrFormula(arg(0)),rangeText(1),argNodes[2]!==undefined?toNum(arg(2)):0);
+    case "TODAY":return new Date().toLocaleDateString("es-SV");
+    case "NOW":return new Date().toLocaleString("es-SV");
+    default:return"#NAME?";
+  }
+}
+function evaluate(formula,selfId){
+  try{
+    if(!formula||!String(formula).startsWith("="))return formula;
+    const tokens=tokenizeFormula(String(formula).slice(1));
+    const ast=parseFormulaExpr(tokens);
+    let res=evalNode(ast,selfId);
+    if(res===null||res===undefined||(typeof res==="number"&&isNaN(res)))return 0;
+    if(typeof res==="boolean")return res?1:0;
+    if(typeof res==="number")return Math.round(res*1e6)/1e6;
+    return res;
+  }catch(e){return 0}
+}
+/* Desplaza referencias relativas de una fórmula (usada por los formatos
+   condicionales importados de Excel, que guardan la fórmula relativa a la
+   celda superior-izquierda del rango). Las referencias con $ no se mueven. */
+function shiftFormulaRefs(formula,dRow,dCol){
+  return formula.replace(/(\$?)([A-Za-z]{1,3})(\$?)([0-9]+)(?!\()/g,(m,dc,col,dr,row)=>{
+    let colNum=0;
+    for(const ch of col.toUpperCase())colNum=colNum*26+(ch.charCodeAt(0)-64);
+    colNum-=1;
+    let rowNum=+row-1;
+    if(!dc)colNum+=dCol;
+    if(!dr)rowNum+=dRow;
+    if(colNum<0||rowNum<0)return m;
+    return(dc?"$":"")+colName(colNum)+(dr?"$":"")+(rowNum+1);
+  });
+}
+function expand(range){if(range.includes(":")){const[a,b]=range.split(":");const s=parseId(a.trim()),e=parseId(b.trim());if(!s||!e)return[];const list=[];for(let r=Math.min(s.row,e.row);r<=Math.max(s.row,e.row);r++)for(let c=Math.min(s.col,e.col);c<=Math.max(s.col,e.col);c++)list.push(cellId(r,c));return list}return range.split(",").map(x=>x.trim())}
+/* AUDITORÍA 2026-08-11: parseFloat("$ 27.00") da NaN — el signo de moneda lo
+   bloquea. Antes esto hacía que COUNT/SUM/AVERAGE/MAX/MIN/SUMIF/COUNTIF
+   ignoraran cualquier celda con formato de moneda (p.ej. PRECIO="$ 27.00"),
+   como en el caso real reportado: COUNT(J788) devolvía 0 aunque J788 sí tenía
+   precio, y por eso IF(COUNT(J788),...) nunca calculaba la comisión. Ahora se
+   limpia $ y , antes de convertir a número. */
+function parseNumLoose(v){if(v==null)return NaN;return parseFloat(String(v).replace(/[$,\s]/g,""))}
+function nums(range){return expand(range).map(id=>{const c=getCell(id);const v=parseNumLoose(c?.display??c?.value);return isNaN(v)?null:v}).filter(v=>v!==null)}
+function sum(r){return nums(r).reduce((a,b)=>a+b,0)}function avg(r){const n=nums(r);return n.length?n.reduce((a,b)=>a+b,0)/n.length:0}
+function matchCrit(val,crit){crit=String(crit).replace(/"/g,"").trim();if(crit.startsWith(">="))return parseNumLoose(val)>=parseNumLoose(crit.slice(2));if(crit.startsWith("<="))return parseNumLoose(val)<=parseNumLoose(crit.slice(2));if(crit.startsWith(">"))return parseNumLoose(val)>parseNumLoose(crit.slice(1));if(crit.startsWith("<"))return parseNumLoose(val)<parseNumLoose(crit.slice(1));if(crit.startsWith("<>"))return String(val)!==crit.slice(2);return String(val)===crit||parseNumLoose(val)===parseNumLoose(crit)}
+function sumif(range,crit,sumRange){const cells=expand(range),sumCells=expand(sumRange);let total=0;cells.forEach((id,i)=>{const c=getCell(id);const v=c?.display??c?.value??"";if(matchCrit(v,crit)){const sv=parseNumLoose(getCell(sumCells[i])?.display??getCell(sumCells[i])?.value);if(!isNaN(sv))total+=sv}});return total}
+function countif(range,crit){return expand(range).filter(id=>{const c=getCell(id);return matchCrit(c?.display??c?.value??"",crit)}).length}
+function vlookup(lookup,range,colIndex,rangeLookup){
+  const cells=expand(range);if(!cells.length||colIndex<1)return"#N/A";
+  const s=parseId(cells[0]),e=parseId(cells[cells.length-1]);
+  if(!s||!e)return"#N/A";
+  const exact=String(rangeLookup).trim()==="0"||String(rangeLookup).toUpperCase()==="FALSE";
+  const lookupStr=String(lookup).replace(/"/g,"").trim();
+  for(let r=s.row;r<=e.row;r++){
+    const key=String(getCell(cellId(r,s.col))?.display??getCell(cellId(r,s.col))?.value??"").trim();
+    if(exact?key===lookupStr:key.toLowerCase()===lookupStr.toLowerCase()||key==lookupStr){
+      const targetCol=s.col+colIndex-1;
+      if(targetCol>e.col)return"#REF!";
+      return getCell(cellId(r,targetCol))?.display??getCell(cellId(r,targetCol))?.value??"";
+    }
+  }
+  return"#N/A";
+}
+function hlookup(lookup,range,rowIndex,rangeLookup){
+  const cells=expand(range);if(!cells.length||rowIndex<1)return"#N/A";
+  const s=parseId(cells[0]),e=parseId(cells[cells.length-1]);
+  if(!s||!e)return"#N/A";
+  const exact=String(rangeLookup).trim()==="0"||String(rangeLookup).toUpperCase()==="FALSE";
+  const lookupStr=String(lookup).replace(/"/g,"").trim();
+  for(let c=s.col;c<=e.col;c++){
+    const key=String(getCell(cellId(s.row,c))?.display??getCell(cellId(s.row,c))?.value??"").trim();
+    if(exact?key===lookupStr:key.toLowerCase()===lookupStr.toLowerCase()||key==lookupStr){
+      const targetRow=s.row+rowIndex-1;
+      if(targetRow>e.row)return"#REF!";
+      return getCell(cellId(targetRow,c))?.display??getCell(cellId(targetRow,c))?.value??"";
+    }
+  }
+  return"#N/A";
+}
+function indexFn(range,rowNum,colNum){
+  const cells=expand(range);if(!cells.length)return"#REF!";
+  const s=parseId(cells[0]),e=parseId(cells[cells.length-1]);
+  if(!s||!e)return"#REF!";
+  const r=s.row+rowNum-1,c=s.col+colNum-1;
+  if(r>e.row||c>e.col||r<s.row||c<s.col)return"#REF!";
+  return getCell(cellId(r,c))?.display??getCell(cellId(r,c))?.value??"";
+}
+function matchFn(lookup,range,matchType){
+  const cells=expand(range);if(!cells.length)return"#N/A";
+  const lookupStr=String(lookup).replace(/"/g,"").trim();
+  for(let i=0;i<cells.length;i++){
+    const key=String(getCell(cells[i])?.display??getCell(cells[i])?.value??"").trim();
+    if(key===lookupStr||key.toLowerCase()===lookupStr.toLowerCase())return i+1;
+  }
+  return"#N/A";
+}
+function openFilterModal(){
+  const p=parseId(selectedCell);
+  if(!p){alert("Selecciona una celda de la columna a filtrar");return}
+  document.getElementById("filter-col-label").textContent="Columna: "+colName(p.col)+(filterCol===p.col&&filterText?" (filtro activo: \""+filterText+"\")":"");
+  document.getElementById("filter-text").value=filterCol===p.col?filterText:"";
+  document.getElementById("filter-modal").classList.add("show");
+  document.getElementById("filter-text").focus();
+}
+function closeFilterModal(){document.getElementById("filter-modal").classList.remove("show")}
+function applyFilter(){
+  const p=parseId(selectedCell);
+  if(!p)return;
+  filterCol=p.col;
+  filterText=document.getElementById("filter-text").value.trim();
+  viewStart=0;
+  closeFilterModal();
+  render();
+  setStatus(filterText?"Filtro: "+colName(filterCol)+" contiene \""+filterText+"\"":"Filtro aplicado");
+}
+function clearFilter(){
+  filterCol=-1;filterText="";viewStart=0;
+  closeFilterModal();render();
+  setStatus("Filtro quitado");
+}
+function toggleBold(){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,{bold:!(cell.style?.bold)});render()}
+function applyColor(){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,{color:document.getElementById("text-color").value});render()}
+function applyBg(){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,{bg:document.getElementById("bg-color").value});render()}
+function formatNumber(type){if(isReadOnly||!selectedCell)return;const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,null,type);render()}
+function insertRow(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.row>=p.row)newData[cellId(pos.row+1,pos.col)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Fila insertada")}
+function deleteRow(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.row===p.row)continue;if(pos.row>p.row)newData[cellId(pos.row-1,pos.col)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Fila eliminada")}
+function insertCol(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.col>=p.col)newData[cellId(pos.row,pos.col+1)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Columna insertada")}
+function deleteCol(){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();const data=getData(),newData={};for(const[id,cell]of Object.entries(data)){const pos=parseId(id);if(pos.col===p.col)continue;if(pos.col>p.col)newData[cellId(pos.row,pos.col-1)]=cell;else newData[id]=cell}getSheets()[currentSheet].data=newData;save();render();setStatus("Columna eliminada")}
+function sortCol(asc=true){if(isReadOnly)return;const p=parseId(selectedCell);if(!p)return;saveHistory();calcMaxUsedRow();const col=p.col,rows=[];for(let r=0;r<=maxUsedRow;r++){const id=cellId(r,col);const cell=getCell(id);rows.push({r,val:cell?.display??cell?.value??"",cell})}const withData=rows.filter(x=>x.val!=="");const empty=rows.filter(x=>x.val==="");withData.sort((a,b)=>{const na=parseFloat(a.val),nb=parseFloat(b.val);if(!isNaN(na)&&!isNaN(nb))return asc?na-nb:nb-na;return asc?String(a.val).localeCompare(String(b.val)):String(b.val).localeCompare(String(a.val))});const sorted=[...withData,...empty];for(let i=0;i<=maxUsedRow;i++){const id=cellId(i,col);if(sorted[i]&&sorted[i].cell)getData()[id]=sorted[i].cell;else delete getData()[id]}save();render();setStatus(asc?"Ordenado A→Z":"Ordenado Z→A")}
+function showChart(){document.getElementById("chart-modal").classList.add("show");document.getElementById("chart-range").value=selectedCell+":"+selectedCell}
+function closeChart(){document.getElementById("chart-modal").classList.remove("show")}
+function generateChart(){const range=document.getElementById("chart-range").value.trim().toUpperCase();const values=nums(range);if(!values.length){alert("No hay datos");return}const canvas=document.getElementById("chart-canvas");const ctx=canvas.getContext("2d");ctx.clearRect(0,0,canvas.width,canvas.height);const max=Math.max(...values,1);const barW=Math.min(40,(canvas.width-40)/values.length-4);values.forEach((v,i)=>{const h=(v/max)*(canvas.height-50);const x=30+i*(barW+6);ctx.fillStyle="#217346";ctx.fillRect(x,canvas.height-30-h,barW,h);ctx.fillStyle="#333";ctx.font="11px sans-serif";ctx.fillText(v,x,canvas.height-30-h-4)});setStatus("Gráfico generado")}
+function toggleFreeze(){freezeOn=!freezeOn;render();setStatus(freezeOn?"Congelado":"Descongelado")}
+function toggleDark(){document.body.classList.toggle("dark");localStorage.setItem("mi-excel-dark",document.body.classList.contains("dark")?"1":"0")}
+function zoomIn(){zoomLevel=Math.min(1.5,zoomLevel+0.1);document.getElementById("zoom-label").textContent=Math.round(zoomLevel*100)+"%";render()}
+function zoomOut(){zoomLevel=Math.max(0.6,zoomLevel-0.1);document.getElementById("zoom-label").textContent=Math.round(zoomLevel*100)+"%";render()}
+function switchSheet(idx){currentSheet=idx;history=[];render()}
+function addSheet(){if(isReadOnly)return;getSheets().push({name:"Hoja"+(getSheets().length+1),data:{}});currentSheet=getSheets().length-1;save();render()}
+function openBooksModal(){filterBooks();document.getElementById("books-modal").classList.add("show")}
+function closeBooksModal(){document.getElementById("books-modal").classList.remove("show")}
+function filterBooks(){const q=(document.getElementById("book-search")?.value||"").toLowerCase();const list=document.getElementById("book-list");list.innerHTML="";Object.keys(store.workbooks).forEach(id=>{const wb=store.workbooks[id];if(q&&!wb.name.toLowerCase().includes(q))return;const div=document.createElement("div");div.className="book-item"+(id===store.currentBookId?" active":"");div.innerHTML=`<span onclick="trySwitchBook('${id}')">${wb.name}${wb.password?" 🔒":""}</span><span class="actions"><button onclick="event.stopPropagation();duplicateBook('${id}')">Duplicar</button><button onclick="event.stopPropagation();renameBook('${id}')">Renombrar</button><button onclick="event.stopPropagation();deleteBook('${id}')" style="color:#c62828;">Eliminar</button></span>`;list.appendChild(div)})}
+function trySwitchBook(id){const wb=store.workbooks[id];if(wb.password&&id!==store.currentBookId){const pass=prompt("Contraseña del libro:");if(pass!==wb.password){alert("Incorrecta");return}window._unlocked=true}switchBook(id);closeBooksModal()}
+function applyClosetFormulas(){
+  if(isReadOnly)return;
+  if(!confirm("¿Aplicar fórmulas de Comisión y Monto a todas las filas?\n\nSe usará:\n• Comisión = ROUND(PRECIO × tasa, 2)\n• Monto = PRECIO − ENVÍO − COMISIÓN\n\nLa tasa se toma de L2 (o 0.025 si está vacío)."))return;
+  saveHistory();
+  const data=getData();
+  // Buscar tasa de comisión
+  let tasa=0.025;
+  const tasaCell=getCell("L2")||getCell("K2");
+  if(tasaCell){
+    const t=parseFloat(tasaCell.display??tasaCell.value);
+    if(!isNaN(t)&&t>0&&t<1)tasa=t;
+  }
+  // Asegurar que L2 tenga la tasa
+  if(!getCell("L2")){
+    data["L2"]={value:String(tasa),display:String(tasa),style:{bg:"#e8f5e9"}};
+  }
+  // Detectar columnas por encabezado
+  let colPrecio=-1,colEnvio=-1,colComision=-1,colMonto=-1,headerRow=-1;
+  for(let r=0;r<30;r++){
+    for(let c=0;c<COLS;c++){
+      const id=cellId(r,c);
+      const val=String(getCell(id)?.display??getCell(id)?.value??"").toUpperCase().trim();
+      if(val==="PRECIO"||val==="PRECIO ")colPrecio=c;
+      if(val==="ENVIO"||val==="ENVÍO"||val==="ENVIO ")colEnvio=c;
+      if(val==="COMISION"||val==="COMISIÓN")colComision=c;
+      if(val==="MONTO")colMonto=c;
+    }
+    if(colPrecio>=0&&colMonto>=0){headerRow=r;break;}
+  }
+  // Fallback a columnas de la plantilla (I=8, J=9, K=10, L=11)
+  if(colPrecio<0)colPrecio=8;
+  if(colEnvio<0)colEnvio=9;
+  if(colComision<0)colComision=10;
+  if(colMonto<0)colMonto=11;
+  if(headerRow<0)headerRow=4;
+  let applied=0;
+  calcMaxUsedRow();
+  for(let r=headerRow+1;r<=maxUsedRow;r++){
+    const precioId=cellId(r,colPrecio);
+    const precio=getCell(precioId);
+    const precioVal=parseFloat(precio?.display??precio?.value);
+    if(isNaN(precioVal))continue; // fila sin precio → saltar (resúmenes, vacías)
+    const comisionId=cellId(r,colComision);
+    const montoId=cellId(r,colMonto);
+    const envioId=cellId(r,colEnvio);
+    // No sobrescribir si ya dice DEV
+    const montoActual=String(getCell(montoId)?.display??"").toUpperCase();
+    if(montoActual==="DEV"||montoActual.includes("DEVOLUC"))continue;
+    // Fórmulas
+    const fComision="=IF("+colName(colPrecio)+(r+1)+"=0,0,MAX(1,ROUND("+colName(colPrecio)+(r+1)+"*$L$2,2)))";
+    const fMonto="="+colName(colPrecio)+(r+1)+"-"+colName(colEnvio)+(r+1)+"-"+colName(colComision)+(r+1);
+    if(!data[comisionId])data[comisionId]={};
+    data[comisionId].formula=fComision;
+    data[comisionId].display=evaluate(fComision,comisionId);
+    data[comisionId].value=data[comisionId].display;
+    if(!data[montoId])data[montoId]={};
+    data[montoId].formula=fMonto;
+    data[montoId].display=evaluate(fMonto,montoId);
+    data[montoId].value=data[montoId].display;
+    applied++;
+  }
+  save();render();
+  setStatus("Fórmulas aplicadas a "+applied+" filas");
+  alert("✅ Se aplicaron fórmulas de Comisión y Monto a "+applied+" filas.\n\nAhora al cambiar el PRECIO se actualizarán solas.");
+}
+function createClosetTemplate(){
+  if(isReadOnly)return;
+  if(!confirm("¿Crear plantilla de Control de Entregas (El Clóset de Ron)?"))return;
+  saveHistory();
+  const data={};
+  // Constantes
+  data["A1"]={value:"Min:",display:"Min:"};
+  data["B1"]={value:"0",display:"0"};
+  data["A2"]={value:"Max:",display:"Max:"};
+  data["B2"]={value:"120",display:"120"};
+  data["A3"]={value:"Prom.",display:"Prom."};
+  data["K1"]={value:"Envío",display:"Envío",style:{bold:true}};
+  data["L1"]={value:"COMISION",display:"COMISION",style:{bold:true}};
+  data["K2"]={value:"3.95",display:"3.95",style:{bg:"#e8f5e9"}};
+  data["L2"]={value:"0.025",display:"0.025",style:{bg:"#e8f5e9"}};
+  data["N2"]={value:"3.95",display:"3.95"};
+  data["O2"]={value:"LOTE DE DEVOLUCION",display:"LOTE DE DEVOLUCION"};
+  data["G2"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112",style:{bold:true,bg:"#c8e6c9"}};
+
+  // Encabezados (fila 5)
+  const headers=["LIQUIDADO","ENTREGA","F.RECOLECTA","TIENDA","ID","NOMBRE","ZONA","TELEFONO","PRECIO","ENVIO","COMISION","MONTO","F.ENTREGA","PILOTO","F.PAGO","ENVIO PAGADO"];
+  headers.forEach((h,i)=>{
+    const id=cellId(4,i);
+    data[id]={value:h,display:h,style:{bold:true,bg:"#e8f5e9"}};
+  });
+
+  // Ejemplo de 3 filas de datos con fórmulas
+  // Fila 6
+  data["A6"]={value:"P",display:"P"};
+  data["B6"]={value:"2025-01-10",display:"2025-01-10"};
+  data["C6"]={value:"2025-01-09",display:"2025-01-09"};
+  data["D6"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112"};
+  data["E6"]={value:"1184373",display:"1184373"};
+  data["F6"]={value:"RONOLDI RIVAS",display:"RONOLDI RIVAS"};
+  data["G6"]={value:"SAN VICENTE",display:"SAN VICENTE"};
+  data["H6"]={value:"61196513",display:"61196513"};
+  data["I6"]={value:"68",display:"68"};
+  data["J6"]={value:"3.95",display:"3.95"};
+  data["K6"]={value:"",display:"1.70",formula:"=IF(I6=0,0,MAX(1,ROUND(I6*$L$2,2)))"};
+  data["L6"]={value:"",display:"62.35",formula:"=I6-J6-K6"};
+  data["M6"]={value:"2025-01-10",display:"2025-01-10"};
+  data["O6"]={value:"PAGADO",display:"PAGADO"};
+
+  // Fila 7
+  data["A7"]={value:"P",display:"P"};
+  data["B7"]={value:"2025-01-10",display:"2025-01-10"};
+  data["C7"]={value:"2025-01-09",display:"2025-01-09"};
+  data["D7"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112"};
+  data["E7"]={value:"1184406",display:"1184406"};
+  data["F7"]={value:"JOE MOLINA",display:"JOE MOLINA"};
+  data["G7"]={value:"LA PAZ",display:"LA PAZ"};
+  data["H7"]={value:"74589753",display:"74589753"};
+  data["I7"]={value:"26",display:"26"};
+  data["J7"]={value:"3.95",display:"3.95"};
+  data["K7"]={value:"",display:"1",formula:"=IF(I7=0,0,MAX(1,ROUND(I7*$L$2,2)))"};
+  data["L7"]={value:"",display:"21.05",formula:"=I7-J7-K7"};
+  data["M7"]={value:"2025-01-10",display:"2025-01-10"};
+  data["O7"]={value:"PAGADO",display:"PAGADO"};
+
+  // Fila 8 - Ejemplo de devolución
+  data["A8"]={value:"P",display:"P"};
+  data["C8"]={value:"2025-01-09",display:"2025-01-09"};
+  data["D8"]={value:"EL CLÓSET DE RON - 112",display:"EL CLÓSET DE RON - 112"};
+  data["E8"]={value:"1147602",display:"1147602"};
+  data["F8"]={value:"CARLOS SERVELLON",display:"CARLOS SERVELLON"};
+  data["G8"]={value:"SAN MIGUEL",display:"SAN MIGUEL"};
+  data["H8"]={value:"76702853",display:"76702853"};
+  data["I8"]={value:"26",display:"26"};
+  data["J8"]={value:"3.95",display:"3.95"};
+  data["K8"]={value:"1",display:"1"};
+  data["L8"]={value:"DEV",display:"DEV"};
+  data["M8"]={value:"DEV",display:"DEV"};
+
+  // Fila de resumen
+  data["L9"]={value:"",display:"83.75",formula:"=SUM(L6:L7)",style:{bg:"#fff9c4",bold:true,resumen:true}};
+
+  // Instrucciones
+  data["A11"]={value:"INSTRUCCIONES:",display:"INSTRUCCIONES:",style:{bold:true}};
+  data["A12"]={value:"1. Envío fijo está en K2 (3.95)",display:"1. Envío fijo está en K2 (3.95)"};
+  data["A13"]={value:"2. Comisión % está en L2 (0.025 = 2.5%)",display:"2. Comisión % está en L2 (0.025 = 2.5%)"};
+  data["A14"]={value:"3. Comisión = máximo entre $1 y 2.5% del precio",display:"3. Comisión = máximo entre $1 y 2.5% del precio"};
+  data["A15"]={value:"4. Monto = Precio - Envío - Comisión",display:"4. Monto = Precio - Envío - Comisión"};
+  data["A16"]={value:"5. Al escribir FECHA en ENTREGA → se pone P + PAGADO + calcula Monto",display:"5. Al escribir FECHA en ENTREGA → se pone P + PAGADO + calcula Monto"};
+  data["A17"]={value:"6. Escribe DEV en Monto para devoluciones (se pinta de rojo)",display:"6. Escribe DEV en Monto para devoluciones (se pinta de rojo)"};
+
+  getSheets()[currentSheet].data=data;
+  getSheets()[currentSheet].name="Entregas";
+  viewStart=0;
+  history=[];
+  save();render();
+  setStatus("Plantilla Clóset creada");
+}
+function createBook(){const name=document.getElementById("new-book-name").value.trim()||("Libro "+(Object.keys(store.workbooks).length+1));const id=uid();store.workbooks[id]={name,sheets:[{name:"Hoja1",data:{}},{name:"Hoja2",data:{}},{name:"Hoja3",data:{}}]};store.currentBookId=id;currentSheet=0;history=[];window._unlocked=true;document.getElementById("new-book-name").value="";save();render();filterBooks();setStatus("Libro creado")}
+function switchBook(id){if(!store.workbooks[id])return;store.currentBookId=id;currentSheet=0;history=[];window._unlocked=!store.workbooks[id].password;save();render();setStatus("Libro: "+store.workbooks[id].name)}
+function renameBook(id){const n=prompt("Nuevo nombre:",store.workbooks[id].name);if(n&&n.trim()){store.workbooks[id].name=n.trim();save();filterBooks();updateBookSelect()}}
+function duplicateBook(id){const src=store.workbooks[id];const newId=uid();store.workbooks[newId]=JSON.parse(JSON.stringify(src));store.workbooks[newId].name=src.name+" (copia)";delete store.workbooks[newId].password;save();filterBooks();updateBookSelect();setStatus("Duplicado")}
+function deleteBook(id){if(Object.keys(store.workbooks).length<=1){alert("No puedes eliminar el único libro");return}if(!confirm("¿Eliminar \""+store.workbooks[id].name+"\"?"))return;delete store.workbooks[id];if(store.currentBookId===id){store.currentBookId=Object.keys(store.workbooks)[0];currentSheet=0}save();render();filterBooks();setStatus("Eliminado")}
+function openFindModal(){document.getElementById("find-modal").classList.add("show");findIndex=-1;findResults=[]}
+function closeFindModal(){document.getElementById("find-modal").classList.remove("show")}
+function collectFindResults(text){findResults=[];if(!text)return;const data=getData();for(const[id,cell]of Object.entries(data)){const val=String(cell.display??cell.value??"");if(val.toLowerCase().includes(text.toLowerCase()))findResults.push(id)}}
+function findNext(){const text=document.getElementById("find-text").value;if(!text)return;if(findResults.length===0||findIndex===-1)collectFindResults(text);if(findResults.length===0){setStatus("No encontrado");return}findIndex=(findIndex+1)%findResults.length;select(findResults[findIndex]);setStatus(`Encontrado ${findIndex+1}/${findResults.length}`)}
+function replaceOne(){if(isReadOnly)return;const find=document.getElementById("find-text").value;const repl=document.getElementById("replace-text").value;if(!find||!selectedCell)return;const cell=getCell(selectedCell);if(!cell)return;const val=String(cell.value??"");if(val.toLowerCase().includes(find.toLowerCase())){const newVal=val.replace(new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi"),repl);setCell(selectedCell,newVal);render();setStatus("Reemplazado")}findNext()}
+function replaceAll(){if(isReadOnly)return;const find=document.getElementById("find-text").value;const repl=document.getElementById("replace-text").value;if(!find)return;collectFindResults(find);let count=0;findResults.forEach(id=>{const cell=getCell(id);if(!cell)return;const val=String(cell.value??"");const newVal=val.replace(new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi"),repl);if(newVal!==val){setCell(id,newVal);count++}});render();setStatus(`Reemplazados: ${count}`)}
+function openGotoModal(){document.getElementById("goto-modal").classList.add("show");document.getElementById("goto-cell").focus()}
+function closeGotoModal(){document.getElementById("goto-modal").classList.remove("show")}
+function goToCell(){const id=document.getElementById("goto-cell").value.trim().toUpperCase();if(parseId(id)){select(id);closeGotoModal()}else alert("Celda no válida")}
+function openCommentModal(){if(!selectedCell)return;document.getElementById("comment-cell-label").textContent="Celda: "+selectedCell;document.getElementById("comment-text").value=getCell(selectedCell)?.comment||"";document.getElementById("comment-modal").classList.add("show")}
+function closeCommentModal(){document.getElementById("comment-modal").classList.remove("show")}
+function saveComment(){const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,null,null,document.getElementById("comment-text").value);render();closeCommentModal();setStatus("Comentario guardado")}
+function deleteComment(){const cell=getCell(selectedCell)||{};setCell(selectedCell,cell.value||"",cell.formula||null,null,null,"");render();closeCommentModal();setStatus("Comentario eliminado")}
+function openScriptModal(){
+  document.getElementById("script-modal").classList.add("show");
+  if(!document.getElementById("script-code").value){
+    document.getElementById("script-code").value="// Ejemplo rápido:\nlog('Celda A1 =', val('A1'));\n// set('A1', 'Hola mundo');\n";
+  }
+  refreshSavedScriptsList();
+}
+/* AUDITORÍA 2026-08-11: los scripts que el usuario escribía en este panel se
+   perdían al cerrar el modal o recargar la página (solo quedaban los
+   "Ejemplos" fijos del código). Ahora se guardan con nombre en
+   store.scripts, que viaja dentro del mismo store que ya persiste en
+   localStorage con save()/load(), así que sobreviven a recargas y se pueden
+   volver a ejecutar cuantas veces se quiera desde el selector "Mis scripts
+   guardados". */
+function getSavedScripts(){if(!store.scripts)store.scripts={};return store.scripts}
+function refreshSavedScriptsList(){
+  const sel=document.getElementById("script-saved");
+  if(!sel)return;
+  const scripts=getSavedScripts();
+  sel.innerHTML='<option value="">— Mis scripts guardados —</option>';
+  Object.keys(scripts).sort().forEach(name=>{
+    const opt=document.createElement("option");
+    opt.value=name;opt.textContent=name;
+    sel.appendChild(opt);
+  });
+}
+function saveCurrentScript(){
+  const code=document.getElementById("script-code").value;
+  if(!code.trim()){alert("Escribe un script antes de guardarlo");return}
+  const current=document.getElementById("script-saved").value;
+  const name=prompt("Nombre para este script:",current||"");
+  if(!name)return;
+  const scripts=getSavedScripts();
+  scripts[name.trim()]=code;
+  save();
+  refreshSavedScriptsList();
+  document.getElementById("script-saved").value=name.trim();
+  document.getElementById("script-delete-btn").style.display="";
+  setStatus("Script \""+name.trim()+"\" guardado");
+}
+function loadSavedScript(){
+  const name=document.getElementById("script-saved").value;
+  const btn=document.getElementById("script-delete-btn");
+  if(!name){btn.style.display="none";return}
+  const scripts=getSavedScripts();
+  if(scripts[name]!==undefined){
+    document.getElementById("script-code").value=scripts[name];
+    document.getElementById("script-output").textContent="";
+    btn.style.display="";
+  }
+}
+function deleteSavedScript(){
+  const name=document.getElementById("script-saved").value;
+  if(!name)return;
+  if(!confirm("¿Eliminar el script guardado \""+name+"\"?"))return;
+  const scripts=getSavedScripts();
+  delete scripts[name];
+  save();
+  refreshSavedScriptsList();
+  document.getElementById("script-delete-btn").style.display="none";
+}
+function closeScriptModal(){document.getElementById("script-modal").classList.remove("show")}
+function scriptLog(){
+  const out=document.getElementById("script-output");
+  const args=Array.from(arguments).map(a=>{
+    if(typeof a==="object")try{return JSON.stringify(a)}catch(e){return String(a)}
+    return String(a);
+  });
+  out.textContent+=(out.textContent?"\n":"")+args.join(" ");
+  out.scrollTop=out.scrollHeight;
+}
+function loadScriptExample(){
+  const v=document.getElementById("script-examples").value;
+  const examples={
+    sum:`// Suma todos los precios (columna I, filas 6+)
+let total = 0, count = 0;
+forEachRow(6, 2000, (r) => {
+  const p = num(val(cell(r, 8))); // columna I = índice 8
+  if (p > 0) { total += p; count++; }
+});
+log("Filas con precio:", count);
+log("Total precios:", total.toFixed(2));
+`,
+    fillDates:`// Marca como entregado las filas que tengan precio pero no fecha
+const hoy = new Date().toISOString().slice(0,10);
+let n = 0;
+forEachRow(6, 2000, (r) => {
+  const precio = num(val(cell(r, 8)));
+  const entrega = val(cell(r, 1)); // col B
+  if (precio > 0 && !entrega) {
+    set(cell(r, 1), hoy);      // ENTREGA
+    set(cell(r, 0), "P");      // LIQUIDADO
+    set(cell(r, 14), "PAGADO"); // F.PAGO
+    n++;
+  }
+});
+log("Filas marcadas:", n);
+render();
+`,
+    recalc:`// Recalcula Comisión y Monto en todas las filas con precio
+const tasa = num(val("L2")) || 0.025;
+const envioFijo = num(val("K2")) || 3.95;
+let n = 0;
+forEachRow(6, 5000, (r) => {
+  const precio = num(val(cell(r, 8)));
+  if (isNaN(precio)) return;
+  let envio = num(val(cell(r, 9)));
+  if (isNaN(envio)) envio = envioFijo;
+  let comision = precio === 0 ? 0 : Math.max(1, Math.round(precio * tasa * 100) / 100);
+  const montoActual = String(val(cell(r, 11))).toUpperCase();
+  let monto = (montoActual === "DEV") ? "DEV" : Math.round((precio - envio - comision) * 100) / 100;
+  set(cell(r, 9), envio);
+  set(cell(r, 10), comision);
+  set(cell(r, 11), monto);
+  n++;
+});
+log("Filas recalculadas:", n);
+render();
+`,
+    countDev:`// Cuenta devoluciones (MONTO = DEV)
+let n = 0;
+forEachRow(6, 5000, (r) => {
+  const m = String(val(cell(r, 11))).toUpperCase();
+  if (m === "DEV" || m.includes("DEVOLUC")) n++;
+});
+log("Devoluciones encontradas:", n);
+`,
+    clearCol:`// Limpia la columna N (PILOTO) de la fila 6 a 100
+for (let r = 6; r <= 100; r++) {
+  set(cell(r, 13), "");
+}
+log("Columna N limpiada (filas 6-100)");
+render();
+`
+  };
+  if(examples[v])document.getElementById("script-code").value=examples[v];
+  document.getElementById("script-examples").value="";
+  document.getElementById("script-saved").value="";
+  document.getElementById("script-delete-btn").style.display="none";
+}
+function runScript(){
+  if(isReadOnly){alert("Solo lectura");return}
+  const code=document.getElementById("script-code").value;
+  const out=document.getElementById("script-output");
+  out.textContent="";
+  if(!code.trim()){out.textContent="(vacío)";return}
+  // API segura para scripts
+  const api={
+    get: (id) => getCell(String(id).toUpperCase()),
+    val: (id) => {
+      const c=getCell(String(id).toUpperCase());
+      return c ? (c.display ?? c.value ?? "") : "";
+    },
+    set: (id, value) => {
+      setCell(String(id).toUpperCase(), value, null, null, null, undefined, true);
+    },
+    cell: (row, col) => cellId(row, col), // row 0-based
+    num: (v) => { const n=parseFloat(String(v).replace(/[$,]/g,"")); return isNaN(n)?NaN:n; },
+    forEachRow: (from, to, fn) => {
+      for(let r=from; r<=to; r++) fn(r);
+    },
+    log: scriptLog,
+    alert: (msg) => alert(msg),
+    render: () => render(),
+    save: () => save(),
+    ROWS, COLS
+  };
+  try{
+    saveHistory();
+    const fn=new Function("get","val","set","cell","num","forEachRow","log","alert","render","save","ROWS","COLS",
+      `"use strict";\n${code}`
+    );
+    fn(api.get, api.val, api.set, api.cell, api.num, api.forEachRow, api.log, api.alert, api.render, api.save, ROWS, COLS);
+    save();
+    render();
+    if(!out.textContent)out.textContent="✓ Script ejecutado";
+    setStatus("Script ejecutado");
+  }catch(e){
+    out.textContent="ERROR: "+e.message;
+    console.error(e);
+  }
+}
+function openProtectModal(){document.getElementById("protect-modal").classList.add("show")}
+function closeProtectModal(){document.getElementById("protect-modal").classList.remove("show")}
+function setPassword(){const p1=document.getElementById("protect-pass").value;const p2=document.getElementById("protect-pass2").value;if(!p1){alert("Escribe una contraseña");return}if(p1!==p2){alert("No coinciden");return}getCurrentBook().password=p1;window._unlocked=true;save();closeProtectModal();updateBookSelect();setStatus("Protegido")}
+function removePassword(){delete getCurrentBook().password;window._unlocked=true;save();closeProtectModal();updateBookSelect();setStatus("Sin protección")}
+/* ============ COLORES DE TEMA Y FORMATO CONDICIONAL REAL (import) ============
+   AUDITORÍA 2026-08-11: SheetJS (versión gratuita) no expone las reglas de
+   formato condicional del Excel, y para colores de celda con "theme" (en vez
+   de un rgb fijo) tampoco resuelve el color final. Como el .xlsx es en el
+   fondo un .zip con XML adentro, se usa JSZip para leerlo directamente y
+   sacar: 1) los colores de tema (xl/theme/theme1.xml), 2) los estilos "dxf"
+   de formato condicional (xl/styles.xml) y 3) las reglas de formato
+   condicional de cada hoja (xl/worksheets/sheetN.xml). */
+let currentTheme=null;
+function parseThemeColors(xml){
+  try{
+    const doc=new DOMParser().parseFromString(xml,"application/xml");
+    const scheme=doc.getElementsByTagName("a:clrScheme")[0]||doc.getElementsByTagName("clrScheme")[0];
+    if(!scheme)return null;
+    const order=["dk1","lt1","dk2","lt2","accent1","accent2","accent3","accent4","accent5","accent6","hlink","folHlink"];
+    const raw={};
+    order.forEach(name=>{
+      const el=scheme.getElementsByTagName("a:"+name)[0]||scheme.getElementsByTagName(name)[0];
+      if(!el)return;
+      const srgb=el.getElementsByTagName("a:srgbClr")[0]||el.getElementsByTagName("srgbClr")[0];
+      const sys=el.getElementsByTagName("a:sysClr")[0]||el.getElementsByTagName("sysClr")[0];
+      if(srgb)raw[name]=srgb.getAttribute("val");
+      else if(sys)raw[name]=sys.getAttribute("lastClr")||"000000";
+    });
+    // El índice "theme" de Excel intercambia el orden de lt1/dk1 respecto al XML.
+    return[raw.lt1,raw.dk1,raw.lt2,raw.dk2,raw.accent1,raw.accent2,raw.accent3,raw.accent4,raw.accent5,raw.accent6,raw.hlink,raw.folHlink];
+  }catch(e){return null}
+}
+function applyTint(hex,tint){
+  if(!hex)return null;
+  if(!tint)return"#"+hex;
+  let r=parseInt(hex.slice(0,2),16)/255,g=parseInt(hex.slice(2,4),16)/255,b=parseInt(hex.slice(4,6),16)/255;
+  const max=Math.max(r,g,b),min=Math.min(r,g,b);let h=0,s=0,l=(max+min)/2;
+  if(max!==min){
+    const d=max-min;s=l>0.5?d/(2-max-min):d/(max+min);
+    switch(max){case r:h=(g-b)/d+(g<b?6:0);break;case g:h=(b-r)/d+2;break;case b:h=(r-g)/d+4;break}
+    h/=6;
+  }
+  if(tint<0)l=l*(1+tint);else l=l*(1-tint)+tint;
+  const hue2rgb=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p};
+  let R,G,B;
+  if(s===0){R=G=B=l}else{const q=l<0.5?l*(1+s):l+s-l*s;const p=2*l-q;R=hue2rgb(p,q,h+1/3);G=hue2rgb(p,q,h);B=hue2rgb(p,q,h-1/3)}
+  const toHex=v=>Math.round(Math.max(0,Math.min(1,v))*255).toString(16).padStart(2,"0");
+  return"#"+toHex(R)+toHex(G)+toHex(B);
+}
+function resolveXmlColor(colorEl){
+  if(!colorEl)return null;
+  const rgb=colorEl.getAttribute("rgb");
+  if(rgb)return"#"+rgb.slice(-6);
+  const themeAttr=colorEl.getAttribute("theme");
+  if(themeAttr!=null&&currentTheme){
+    const base=currentTheme[+themeAttr];
+    if(base)return applyTint(base,parseFloat(colorEl.getAttribute("tint")||"0"));
+  }
+  return null;
+}
+/* ============ BORDES REALES DE EXCEL ============
+   AUDITORÍA 2026-08-11: SheetJS (versión gratuita) no expone los bordes de
+   celda en absoluto — solo relleno y fuente. Igual que con el formato
+   condicional, se leen directamente del XML interno del .xlsx: los estilos
+   de borde están en xl/styles.xml (<borders>), cada celda de la hoja apunta
+   a un estilo de celda por índice (atributo s="N" en <c>), y ese estilo
+   (<cellXfs>) apunta a un borderId. Se arma un mapa celda->bordes y se
+   aplica encima de lo que ya trae SheetJS. */
+function parseBorderColor(colorEl){
+  if(!colorEl)return"#000000";
+  const c=resolveXmlColor(colorEl);
+  return c||"#000000"; // colores "indexed" (paleta vieja) casi siempre son negro automático
+}
+function borderWidth(style){
+  if(style==="medium")return"2px";
+  if(style==="thick")return"3px";
+  if(style==="double")return"3px";
+  return"1px";
+}
+function parseBordersAndXfs(stylesXml){
+  try{
+    const doc=new DOMParser().parseFromString(stylesXml,"application/xml");
+    const bordersEl=doc.getElementsByTagName("borders")[0];
+    const borders=[];
+    if(bordersEl){
+      Array.from(bordersEl.getElementsByTagName("border")).forEach(b=>{
+        const side=(tag)=>{
+          const el=Array.from(b.children).find(x=>x.tagName===tag);
+          if(!el)return null;
+          const style=el.getAttribute("style");
+          if(!style)return null;
+          return{style,color:parseBorderColor(el.getElementsByTagName("color")[0])};
+        };
+        borders.push({top:side("top"),right:side("right"),bottom:side("bottom"),left:side("left")});
+      });
+    }
+    const cellXfsEl=doc.getElementsByTagName("cellXfs")[0];
+    const xfBorderIds=[];
+    if(cellXfsEl){
+      Array.from(cellXfsEl.children).forEach(xf=>{
+        if(xf.tagName!=="xf")return;
+        const bId=xf.getAttribute("borderId");
+        xfBorderIds.push(bId!=null?+bId:0);
+      });
+    }
+    return{borders,xfBorderIds};
+  }catch(e){return{borders:[],xfBorderIds:[]}}
+}
+function parseCellBorders(sheetXml,borders,xfBorderIds){
+  try{
+    // AUDITORÍA 2026-08-11: recorrer cada <c> con un DOMParser completo era
+    // demasiado lento en hojas grandes (decenas de miles de celdas -> árbol
+    // DOM enorme). Se cambia a un escaneo de texto con regex, mucho más
+    // rápido porque no construye ningún árbol.
+    const result={};
+    const cTagRe=/<c\b([^>]*)>/g;
+    let m;
+    while((m=cTagRe.exec(sheetXml))){
+      const attrs=m[1];
+      const rMatch=attrs.match(/\br="([A-Za-z]+[0-9]+)"/);
+      if(!rMatch)continue;
+      const sMatch=attrs.match(/\bs="([0-9]+)"/);
+      if(!sMatch)continue;
+      const borderId=xfBorderIds[+sMatch[1]];
+      if(!borderId)continue; // 0 = sin borde
+      const b=borders[borderId];
+      if(!b||(!b.top&&!b.right&&!b.bottom&&!b.left))continue;
+      result[rMatch[1]]=b;
+    }
+    return result;
+  }catch(e){return{}}
+}
+function parseDxfs(stylesXml){
+  try{
+    const doc=new DOMParser().parseFromString(stylesXml,"application/xml");
+    const dxfsEl=doc.getElementsByTagName("dxfs")[0];
+    if(!dxfsEl)return[];
+    return Array.from(dxfsEl.getElementsByTagName("dxf")).map(dxf=>{
+      const style={};
+      const font=dxf.getElementsByTagName("font")[0];
+      if(font){
+        const colorEl=font.getElementsByTagName("color")[0];
+        const c=resolveXmlColor(colorEl);
+        if(c)style.color=c;
+        if(font.getElementsByTagName("b").length)style.bold=true;
+        const iEl=font.getElementsByTagName("i")[0];
+        if(iEl&&iEl.getAttribute("val")!=="0")style.italic=true;
+      }
+      const fill=dxf.getElementsByTagName("fill")[0];
+      if(fill){
+        const bgColorEl=fill.getElementsByTagName("bgColor")[0];
+        const fgColorEl=fill.getElementsByTagName("fgColor")[0];
+        const c=resolveXmlColor(bgColorEl)||resolveXmlColor(fgColorEl);
+        if(c)style.bg=c;
+      }
+      return style;
+    });
+  }catch(e){return[]}
+}
+function parseConditionalFormatting(sheetXml,dxfs){
+  try{
+    const doc=new DOMParser().parseFromString(sheetXml,"application/xml");
+    const nodes=Array.from(doc.getElementsByTagName("conditionalFormatting"));
+    const rules=[];
+    nodes.forEach(node=>{
+      const sqref=node.getAttribute("sqref");
+      if(!sqref)return;
+      Array.from(node.getElementsByTagName("cfRule")).forEach(cf=>{
+        const type=cf.getAttribute("type");
+        const operator=cf.getAttribute("operator");
+        const dxfId=cf.getAttribute("dxfId");
+        const priority=+(cf.getAttribute("priority")||999);
+        const text=cf.getAttribute("text");
+        const formulas=Array.from(cf.getElementsByTagName("formula")).map(f=>f.textContent);
+        const dxf=dxfId!=null&&dxfs[+dxfId]?dxfs[+dxfId]:null;
+        if(!dxf||(!dxf.bg&&!dxf.color&&!dxf.bold&&!dxf.italic))return; // sin estilo aplicable (p.ej. iconSet/colorScale)
+        rules.push({sqref,type,operator,formulas,text,priority,dxf});
+      });
+    });
+    rules.sort((a,b)=>a.priority-b.priority);
+    return rules;
+  }catch(e){return[]}
+}
+async function extractExcelExtras(file){
+  try{
+    if(typeof JSZip==="undefined")return null;
+    const zip=await JSZip.loadAsync(file);
+    const themeFile=zip.file("xl/theme/theme1.xml");
+    currentTheme=themeFile?parseThemeColors(await themeFile.async("string")):null;
+    const stylesFile=zip.file("xl/styles.xml");
+    const stylesXml=stylesFile?await stylesFile.async("string"):"";
+    const dxfs=stylesXml?parseDxfs(stylesXml):[];
+    const {borders,xfBorderIds}=stylesXml?parseBordersAndXfs(stylesXml):{borders:[],xfBorderIds:[]};
+    const wbFile=zip.file("xl/workbook.xml");
+    const relsFile=zip.file("xl/_rels/workbook.xml.rels");
+    if(!wbFile)return null;
+    const wbDoc=new DOMParser().parseFromString(await wbFile.async("string"),"application/xml");
+    const relMap={};
+    if(relsFile){
+      const relsDoc=new DOMParser().parseFromString(await relsFile.async("string"),"application/xml");
+      Array.from(relsDoc.getElementsByTagName("Relationship")).forEach(r=>{relMap[r.getAttribute("Id")]=r.getAttribute("Target")});
+    }
+    const sheetEls=Array.from(wbDoc.getElementsByTagName("sheet"));
+    const condFormatsByName={},bordersByName={};
+    for(const s of sheetEls){
+      const name=s.getAttribute("name");
+      const rid=s.getAttribute("r:id")||s.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id");
+      const target=relMap[rid];
+      if(!target)continue;
+      const path="xl/"+target.replace(/^\/?xl\//,"").replace(/^\.?\//,"");
+      const sf=zip.file(path);
+      if(!sf)continue;
+      const sheetXml=await sf.async("string");
+      condFormatsByName[name]=parseConditionalFormatting(sheetXml,dxfs);
+      bordersByName[name]=parseCellBorders(sheetXml,borders,xfBorderIds);
+    }
+    return{condFormatsByName,bordersByName};
+  }catch(e){
+    console.warn("No se pudieron leer formatos condicionales/bordes del Excel",e);
+    return null;
+  }
+}
+function importFile(){document.getElementById("file-input").click()}
+function handleImport(e){
+  const file=e.target.files[0];if(!file)return;
+  const name=file.name.toLowerCase();
+  const sizeMB=(file.size/1024/1024).toFixed(1);
+  setStatus("Importando "+sizeMB+" MB...");
+  if(name.endsWith(".xlsx")||name.endsWith(".xls")){
+    const reader=new FileReader();
+    reader.onerror=()=>{alert("No se pudo leer el archivo del dispositivo.");setStatus("Error");};
+    reader.onload=async ev=>{
+      try{
+        const data=new Uint8Array(ev.target.result);
+        setStatus("Leyendo colores, bordes y formato condicional...");
+        // Se extraen primero el tema de colores, los bordes y las reglas de
+        // formato condicional (vía JSZip, leyendo el XML interno) para que
+        // estén listos cuando se procesen las celdas más abajo.
+        const extras=await extractExcelExtras(file);
+        const condFormatsByName=extras?extras.condFormatsByName:null;
+        const bordersByName=extras?extras.bordersByName:null;
+        setStatus("Procesando Excel...");
+        // Sin cellStyles en archivos grandes = más rápido y menos memoria
+        const heavy=file.size>400000;
+        const workbook=XLSX.read(data,{
+          type:"array",
+          cellDates:true,
+          cellStyles:!heavy,
+          cellNF:true,
+          sheetStubs:false
+        });
+        saveHistory();
+        const sheets=[];
+        let totalCells=0, formulaCount=0, colorCount=0, borderCount=0;
+        workbook.SheetNames.forEach((sheetName,idx)=>{
+          const ws=workbook.Sheets[sheetName];
+          if(!ws||!ws["!ref"]){
+            sheets.push({name:sheetName||("Hoja"+(idx+1)),data:{}});
+            return;
+          }
+          const range=XLSX.utils.decode_range(ws["!ref"]);
+          const sheetData={};
+          const maxR=Math.min(range.e.r,ROWS-1);
+          const maxC=Math.min(range.e.c,COLS-1);
+          for(let r=range.s.r;r<=maxR;r++){
+            for(let c=range.s.c;c<=maxC;c++){
+              const cellRef=XLSX.utils.encode_cell({r,c});
+              const raw=ws[cellRef];
+              if(!raw)continue;
+              let display="";
+              if(raw.w!=null)display=String(raw.w).trim();
+              else if(raw.v!=null){
+                if(raw.t==="d"&&raw.v instanceof Date){
+                  display=raw.v.toISOString().slice(0,10);
+                }else display=String(raw.v).trim();
+              }
+              let formula=null;
+              if(raw.f){formula="="+raw.f;formulaCount++;}
+              // AUDITORÍA 2026-08-11: antes solo se leía s.fgColor.rgb, así que
+              // las celdas coloreadas con un color de "tema" (muy común: son los
+              // colores que salen primero en la paleta de Excel) se perdían al
+              // importar. sgFgColorHex resuelve rgb directo O tema+tint.
+              const sgColorHex=(colorObj)=>{
+                if(!colorObj)return null;
+                if(colorObj.rgb)return"#"+String(colorObj.rgb).slice(-6);
+                if(colorObj.theme!=null&&currentTheme){
+                  const base=currentTheme[colorObj.theme];
+                  if(base)return applyTint(base,colorObj.tint||0);
+                }
+                return null;
+              };
+              let bg=null, color=null, bold=false, italic=false;
+              if(raw.s){
+                const s=raw.s;
+                if(s.patternType&&s.patternType!=="none"){
+                  bg=sgColorHex(s.fgColor)||sgColorHex(s.bgColor);
+                  if(bg)colorCount++;
+                }
+                if(s.font&&s.font.bold)bold=true;
+                if(s.font&&s.font.italic)italic=true;
+                if(s.font&&s.font.color)color=sgColorHex(s.font.color);
+              }
+              // AUDITORÍA 2026-08-11: bordes de celda (sacados vía JSZip, ver
+              // extractExcelExtras/parseCellBorders más abajo, porque SheetJS
+              // gratuito no los expone).
+              const cellBorder=(bordersByName&&bordersByName[sheetName]&&bordersByName[sheetName][cellRef])||null;
+              if(cellBorder)borderCount++;
+              if(display===""&&!formula&&!bg&&!cellBorder)continue;
+              const id=cellId(r,c);
+              const cellObj={value:display,display:display};
+              if(formula)cellObj.formula=formula;
+              if(bg||color||bold||italic||cellBorder){
+                cellObj.style={};
+                if(bg)cellObj.style.bg=bg;
+                if(color)cellObj.style.color=color;
+                if(bold)cellObj.style.bold=true;
+                if(italic)cellObj.style.italic=true;
+                if(cellBorder)cellObj.style.border=cellBorder;
+              }
+              sheetData[id]=cellObj;
+              totalCells++;
+            }
+          }
+          const condFormats=(condFormatsByName&&condFormatsByName[sheetName])||[];
+          sheets.push({name:sheetName||("Hoja"+(idx+1)),data:sheetData,condFormats});
+        });
+        if(sheets.length===0){setStatus("Archivo vacío");return}
+        // Renombrar libro con nombre del archivo
+        const bookName=file.name.replace(/\.(xlsx|xls)$/i,"");
+        getCurrentBook().name=bookName;
+        getCurrentBook().sheets=sheets;
+        currentSheet=0;
+        viewStart=0;
+        filterCol=-1;filterText="";
+        history=[];
+        dupCache={sheetIdx:-1,cols:{}};
+        try{save();}catch(se){
+          console.warn("localStorage lleno, datos solo en memoria",se);
+          alert("El archivo se cargó, pero es muy grande para guardarlo en el navegador.\nPuedes usarlo ahora, pero al recargar la página se perderá.\n\nSugerencia: exporta a CSV las partes que necesites.");
+        }
+        render();
+        updateBookSelect();
+        const cfCount=sheets.reduce((n,s)=>n+(s.condFormats?s.condFormats.length:0),0);
+        let msg="✓ "+bookName+": "+sheets.length+" hoja(s), "+totalCells+" celdas";
+        if(formulaCount)msg+=", "+formulaCount+" fórm.";
+        if(cfCount)msg+=", "+cfCount+" regla(s) de formato condicional";
+        if(borderCount)msg+=", "+borderCount+" borde(s)";
+        setStatus(msg);
+        if(totalCells===0)alert("No se encontraron datos. El archivo puede estar vacío o protegido.");
+      }catch(err){
+        console.error(err);
+        alert("No se pudo importar el Excel.\n\nError: "+(err.message||err)+"\n\nPrueba:\n1. Guardar el archivo de nuevo en Excel\n2. Exportar a CSV e importar el CSV\n3. Usar un archivo más pequeño");
+        setStatus("Error al importar");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }else{
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const lines=ev.target.result.split(/\r?\n/);
+      saveHistory();
+      const data=getData();
+      Object.keys(data).forEach(k=>delete data[k]);
+      lines.forEach((line,r)=>{
+        if(r>=ROWS)return;
+        const cols=line.includes(";")&&!line.includes(",")?line.split(";"):line.split(",");
+        cols.forEach((val,c)=>{
+          if(c>=COLS)return;
+          const str=val.trim();
+          if(str!==""){
+            const id=cellId(r,c);
+            data[id]={value:str,display:str};
+          }
+        });
+      });
+      save();render();
+      setStatus("CSV importado");
+    };
+    reader.readAsText(file);
+  }
+  e.target.value="";
+}
+function saveHistory(){history.push(JSON.stringify(getData()));if(history.length>25)history.shift()}
+function undo(){if(isReadOnly||!history.length)return;getSheets()[currentSheet].data=JSON.parse(history.pop());render();setStatus("Deshecho")}
+function exportCSV(){calcMaxUsedRow();let csv="";for(let r=0;r<=maxUsedRow;r++){const row=[];for(let c=0;c<COLS;c++){const cell=getCell(cellId(r,c));row.push(cell?(cell.display??cell.value??""):"")}csv+=row.join(",")+"\n"}const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=(getCurrentBook()?.name||"mi-excel")+".csv";a.click();setStatus("Exportado")}
+function setStatus(msg){document.getElementById("status").textContent=msg;setTimeout(()=>document.getElementById("status").textContent="Listo",2500)}
+function save(){
+  if(isReadOnly)return;
+  try{
+    localStorage.setItem("mi-excel-v3",JSON.stringify(store));
+  }catch(e){
+    console.warn("No se pudo guardar en localStorage (lleno o bloqueado)",e);
+  }
+}
+function load(){const s=localStorage.getItem("mi-excel-v3");if(s)try{store=JSON.parse(s)}catch{}if(!store.workbooks||!Object.keys(store.workbooks).length){const id=uid();store={workbooks:{[id]:{name:"Libro 1",sheets:[{name:"Hoja1",data:{}},{name:"Hoja2",data:{}},{name:"Hoja3",data:{}}]}},currentBookId:id}}if(!store.currentBookId||!store.workbooks[store.currentBookId])store.currentBookId=Object.keys(store.workbooks)[0];window._unlocked=!getCurrentBook()?.password;if(localStorage.getItem("mi-excel-dark")==="1")document.body.classList.add("dark")}
+function openShareModal(){
+  document.getElementById("share-modal").classList.add("show");
+  document.getElementById("share-link").value="";
+  document.getElementById("share-info").textContent="";
+}
+function closeShareModal(){document.getElementById("share-modal").classList.remove("show")}
+function closeReadonlyModal(){document.getElementById("readonly-modal").classList.remove("show")}
+function generateShareLink(){
+  const perm=document.querySelector('input[name="perm"]:checked').value;
+  const wb=getCurrentBook();
+  const payload={
+    name:wb.name,
+    sheets:wb.sheets,
+    currentSheet:currentSheet,
+    perm:perm,
+    ts:Date.now()
+  };
+  try{
+    const json=JSON.stringify(payload);
+    // Compresión fuerte para que quepan libros grandes
+    let encoded;
+    if(typeof LZString!=="undefined"){
+      encoded=LZString.compressToEncodedURIComponent(json);
+    }else{
+      encoded=btoa(unescape(encodeURIComponent(json)));
+    }
+    const sizeKB=Math.round(encoded.length/1024);
+    if(sizeKB>2500){
+      alert("El libro sigue siendo demasiado grande incluso comprimido ("+sizeKB+" KB).\n\nOpciones:\n1. Exporta a CSV y compártelo por WhatsApp/Drive\n2. Comparte solo una hoja (borra las otras)\n3. Usa el archivo Excel original");
+      document.getElementById("share-info").textContent="Demasiado grande ("+sizeKB+" KB)";
+      return;
+    }
+    const base=window.location.href.split("#")[0].split("?")[0];
+    // Prefijo "c" = comprimido con LZ
+    const link=base+"#share=c"+encoded;
+    document.getElementById("share-link").value=link;
+    document.getElementById("share-info").textContent="✅ Enlace listo ("+sizeKB+" KB comprimidos) • Público • Sin cuenta";
+    setStatus("Enlace generado");
+  }catch(e){
+    console.error(e);
+    alert("No se pudo generar el enlace.\nPrueba exportar a CSV.");
+  }
+}
+function copyShareLink(){
+  const ta=document.getElementById("share-link");
+  if(!ta.value){alert("Primero genera el enlace");return}
+  ta.select();
+  ta.setSelectionRange(0,999999);
+  navigator.clipboard.writeText(ta.value).then(()=>{
+    setStatus("Enlace copiado");
+    alert("✅ Enlace copiado.\n\nCualquiera puede abrirlo sin cuenta.");
+  }).catch(()=>{
+    try{document.execCommand("copy");setStatus("Enlace copiado");alert("✅ Enlace copiado");}
+    catch{alert("Copia el enlace manualmente (mantén presionado el texto)");}
+  });
+}
+function loadFromShare(){
+  const hash=window.location.hash;
+  if(!hash.startsWith("#share="))return false;
+  try{
+    let raw=hash.substring(7);
+    let jsonStr;
+    // Formato comprimido (prefijo "c")
+    if(raw.startsWith("c")&&typeof LZString!=="undefined"){
+      jsonStr=LZString.decompressFromEncodedURIComponent(raw.substring(1));
+      if(!jsonStr)throw new Error("No se pudo descomprimir");
+    }else{
+      // Formato antiguo (base64)
+      jsonStr=decodeURIComponent(escape(atob(raw)));
+    }
+    const payload=JSON.parse(jsonStr);
+    const id=uid();
+    const wb=payload.workbook || {
+      name: payload.name || "Libro compartido",
+      sheets: payload.sheets || []
+    };
+    store.workbooks[id]=wb;
+    store.currentBookId=id;
+    currentSheet=payload.currentSheet||0;
+    isReadOnly=payload.perm==="view";
+    window._unlocked=true;
+    history.replaceState(null,"",window.location.pathname+window.location.search);
+    if(isReadOnly){
+      setTimeout(()=>document.getElementById("readonly-modal").classList.add("show"),300);
+    }
+    setStatus(isReadOnly?"Modo solo lectura (compartido)":"Libro compartido abierto");
+    return true;
+  }catch(e){
+    console.error(e);
+    alert("No se pudo abrir el enlace compartido.\nPuede estar dañado o ser demasiado grande para este navegador.");
+    return false;
+  }
+}
+document.addEventListener("keydown",e=>{if(e.ctrlKey&&e.key==="z"){e.preventDefault();undo()}if(e.ctrlKey&&e.key==="f"){e.preventDefault();openFindModal()}if(e.key==="Delete"&&selectedCell&&!editingCell&&!isReadOnly){setCell(selectedCell,"");render()}});
+document.getElementById("grid-container").addEventListener("scroll",onGridScroll,{passive:true});
+const fromShare=loadFromShare();if(!fromShare)load();render();
+</script>
+</body>
+</html>
